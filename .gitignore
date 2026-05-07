@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Large company filings (available on SEC EDGAR)
+company files/
+
+# Local Claude Code settings
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
