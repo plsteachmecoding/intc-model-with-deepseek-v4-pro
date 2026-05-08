@@ -7,8 +7,8 @@ for Intel Corporation (INTC) using openpyxl with CHOOSE/MATCH scenario switching
 Usage:  python build_intc_model.py
 Output: Intel_IB_Model.xlsx (in current directory)
 
-Architecture (12 tabs):
-  Cover → Key_Summary → Assumptions → Segment_Revenue → Segment_PL
+Architecture (11 tabs):
+  Cover → Key_Summary → Assumptions → Growth_Drivers → Segment_PL
   → Consolidated_PL → BS → Cash_Flow → DCF → Sensitivity → Ratio_Analysis
 
 Data sources:
@@ -49,6 +49,74 @@ YR_COLS = {"2023A": 2, "2024A": 3, "2025A": 4, "2026E": 6, "2027E": 7, "2028E": 
 HIST_COLS = [2, 3, 4]
 FCST_COLS = [6, 7, 8]
 SEL_COL   = 9
+
+# Assumptions annual columns mapped to FCST_COLS for cross-sheet references
+# FCST_COLS [6,7,8] -> Assumptions annual rollup [22,27,32]
+ASP_ANN_COLS = {6: 22, 7: 27, 8: 32}
+
+# Segment_PL quarterly annual rollup columns → annual-tab columns
+# Annual tabs (Consolidated_PL, BS, CF, DCF) use cols [2,3,4,6,7,8]
+# Segment_PL quarterly uses annual cols [6,11,16,22,27,32]
+SEGPL_COL_MAP = {2: 6, 3: 11, 4: 16, 6: 22, 7: 27, 8: 32}
+
+# ============================================================
+# GROWTH_DRIVERS QUARTERLY LAYOUT (ALL 6 YEARS)
+# ============================================================
+# Col layout for Growth_Drivers tab (35 cols):
+# B=Q1'23  C=Q2'23  D=Q3'23  E=Q4'23  F=FY2023A
+# G=Q1'24  H=Q2'24  I=Q3'24  J=Q4'24  K=FY2024A
+# L=Q1'25  M=Q2'25  N=Q3'25  O=Q4'25  P=FY2025A
+# Q=spacer
+# R=Q1'26  S=Q2'26  T=Q3'26  U=Q4'26  V=FY2026E
+# W=Q1'27  X=Q2'27  Y=Q3'27  Z=Q4'27  AA=FY2027E
+# AB=Q1'28 AC=Q2'28 AD=Q3'28 AE=Q4'28 AF=FY2028E
+# AG=Selected  AH=spacer  AI=Notes
+GD_NCOL = 35
+GD_HIST_QCOLS = {
+    2023: [2, 3, 4, 5],
+    2024: [7, 8, 9, 10],
+    2025: [12, 13, 14, 15],
+}
+GD_HIST_ANN_COLS = {2023: 6, 2024: 11, 2025: 16}
+GD_QCOLS = {
+    2026: [18, 19, 20, 21],
+    2027: [23, 24, 25, 26],
+    2028: [28, 29, 30, 31],
+}
+GD_ANN_COLS = {2026: 22, 2027: 27, 2028: 32}
+GD_ANN_COLS_LIST = [6, 11, 16, 22, 27, 32]
+GD_SEL_COL = 33
+GD_SPACER_COL = 17
+GD_SPACER2_COL = 34
+# All years (hist + fcst) for iteration: list of (year, qcols, ann_col, suffix)
+GD_ALL_YEARS = [
+    (2023, [2, 3, 4, 5], 6, "A"),
+    (2024, [7, 8, 9, 10], 11, "A"),
+    (2025, [12, 13, 14, 15], 16, "A"),
+    (2026, [18, 19, 20, 21], 22, "E"),
+    (2027, [23, 24, 25, 26], 27, "E"),
+    (2028, [28, 29, 30, 31], 32, "E"),
+]
+# Quarterly segment revenue actuals (where available from 10-Q/estimates)
+# Format: {segment: {year: {qnum: value}}}
+GD_QREV = {
+    "ccg": {
+        2025: {1: 7629, 2: 8189, 3: 8190, 4: 8220},
+        2026: {1: 7727},
+    },
+    "dcai": {
+        2025: {1: 4126, 2: 4058, 3: 4058, 4: 4677},
+        2026: {1: 5052},
+    },
+    "foundry": {
+        2025: {1: 4667, 2: 4321, 3: 4320, 4: 4518},
+        2026: {1: 5421},
+    },
+    "allother": {
+        2025: {1: 943, 2: 1022, 3: 1022, 4: 576},
+        2026: {1: 628},
+    },
+}
 
 # ============================================================
 # COLOR CODING — IB Standard (see legend on every tab)
@@ -143,32 +211,45 @@ def _label(ws, r, text, bold=False):
     c.border = BD
     c.alignment = ALIGN_LEFT
 
+def _is_quarterly(ws):
+    """True for tabs using quarterly 35-col layout (GD_NCOL)."""
+    return ws.title in ("Growth_Drivers", "Assumptions", "Segment_PL")
+
+def _ncol_for(ws):
+    """Return the Notes/width column for this tab (35 for quarterly, 11 for annual)."""
+    return GD_NCOL if _is_quarterly(ws) else NCOL
+
 def _section(ws, r, text):
     """Section header — bold dark blue"""
     c = ws.cell(row=r, column=1, value=text)
     c.font = FONT_SECTION
-    for col in range(1, NCOL):
+    n = _ncol_for(ws)
+    for col in range(1, n):
         ws.cell(row=r, column=col).border = BD
 
 def _note(ws, r, text):
-    """Notes column (K) — strips leading '=' to prevent openpyxl formula errors"""
+    """Notes column — strips leading '=' to prevent openpyxl formula errors."""
     if text and text.startswith("="):
         text = text[1:]
-    c = ws.cell(row=r, column=NCOL, value=text)
+    col = _ncol_for(ws)
+    c = ws.cell(row=r, column=col, value=text)
     c.font = Font(size=9, name="Calibri")
     c.alignment = ALIGN_LEFT
+
 
 def _title_row(ws, r, text):
     """Tab title — row 1"""
     c = ws.cell(row=r, column=1, value=text)
     c.font = FONT_TITLE
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=NCOL - 1)
+    n = _ncol_for(ws)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n - 1)
 
 def _unit_row(ws, r, text="USD Million (except per-share data)"):
     """Unit row — row 2, grey italic"""
     c = ws.cell(row=r, column=1, value=text)
     c.font = FONT_UNIT
-    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=NCOL - 1)
+    n = _ncol_for(ws)
+    ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=n - 1)
 
 def _year_header(ws, r, extra_cols=True):
     """Standard year-header row with dark fill + white font.
@@ -211,6 +292,30 @@ def _yr_header_no_scenario(ws, r):
     if NCOL == 11:
         c = ws.cell(row=r, column=NCOL, value="Notes")
         c.font = FONT_HEADER; c.fill = FILL_HEADER; c.border = BD; c.alignment = ALIGN_CENTER
+
+def _qheader(ws, r):
+    """Quarterly column header for Growth_Drivers and other quarterly tabs.
+    35-column layout matching GD_NCOL."""
+    hdrs = {
+        2: "Q1'23A", 3: "Q2'23A", 4: "Q3'23A", 5: "Q4'23A", 6: "FY2023A",
+        7: "Q1'24A", 8: "Q2'24A", 9: "Q3'24A", 10: "Q4'24A", 11: "FY2024A",
+        12: "Q1'25A", 13: "Q2'25A", 14: "Q3'25A", 15: "Q4'25A", 16: "FY2025A",
+        18: "Q1'26E", 19: "Q2'26E", 20: "Q3'26E", 21: "Q4'26E", 22: "FY2026E",
+        23: "Q1'27E", 24: "Q2'27E", 25: "Q3'27E", 26: "Q4'27E", 27: "FY2027E",
+        28: "Q1'28E", 29: "Q2'28E", 30: "Q3'28E", 31: "Q4'28E", 32: "FY2028E",
+        33: "Selected",
+    }
+    ANN_COLS_SET = {6, 11, 16, 22, 27, 32}
+    for col, txt in hdrs.items():
+        c = ws.cell(row=r, column=col, value=txt)
+        c.font = FONT_HEADER
+        c.fill = PatternFill("solid", fgColor="2E75B6") if col in ANN_COLS_SET else FILL_HEADER
+        c.border = BD; c.alignment = ALIGN_CENTER
+    for col in [1, 17, 34]:
+        c = ws.cell(row=r, column=col, value="")
+        c.fill = FILL_HEADER; c.border = BD
+    c = ws.cell(row=r, column=GD_NCOL, value="Notes")
+    c.font = FONT_HEADER; c.fill = FILL_HEADER; c.border = BD; c.alignment = ALIGN_CENTER
 
 
 def _arow(ws, r, label, h1, h2, h3, base, bull, bear, fmt="#,##0.0", note_text=""):
@@ -327,1199 +432,1441 @@ def _setup_scenario_selector(ws):
 # ============================================================
 
 def build_assumptions(wb, R):
-    """Build the Assumptions tab with all scenario inputs and CHOOSE/MATCH switching."""
+    """Build the Assumptions tab with quarterly columns, Base/Bull/Bear rows,
+    and CHOOSE/MATCH Selected row. User adjusts each quarter independently.
+    Annual = SUM or AVERAGE of quarterly values."""
     ws = wb["Assumptions"]
-    _title_row(ws, 1, "Intel (INTC) — Assumptions & Scenario Design")
+    _title_row(ws, 1, "Intel (INTC) - Assumptions & Scenario Design (Quarterly)")
     _setup_scenario_selector(ws)
 
-    # Row 3: spacer
-    # Row 4: year header
-    _year_header(ws, 4)
+    # Row 3: spacer, Row 4: column headers
+    r = 4
+    # Build quarterly header matching Growth_Drivers
+    hdrs = {
+        2: "Q1'23A", 3: "Q2'23A", 4: "Q3'23A", 5: "Q4'23A", 6: "FY2023A",
+        7: "Q1'24A", 8: "Q2'24A", 9: "Q3'24A", 10: "Q4'24A", 11: "FY2024A",
+        12: "Q1'25A", 13: "Q2'25A", 14: "Q3'25A", 15: "Q4'25A", 16: "FY2025A",
+        18: "Q1'26E", 19: "Q2'26E", 20: "Q3'26E", 21: "Q4'26E", 22: "FY2026E",
+        23: "Q1'27E", 24: "Q2'27E", 25: "Q3'27E", 26: "Q4'27E", 27: "FY2027E",
+        28: "Q1'28E", 29: "Q2'28E", 30: "Q3'28E", 31: "Q4'28E", 32: "FY2028E",
+    }
+    ANN_COLS_SET = {6, 11, 16, 22, 27, 32}
+    for col, txt in hdrs.items():
+        c = ws.cell(row=r, column=col, value=txt)
+        c.font = FONT_HEADER
+        c.fill = PatternFill("solid", fgColor="2E75B6") if col in ANN_COLS_SET else FILL_HEADER
+        c.border = BD; c.alignment = ALIGN_CENTER
+    for col in [1, 17, 33, 34]:
+        c = ws.cell(row=r, column=col, value="")
+        c.fill = FILL_HEADER; c.border = BD
+    c = ws.cell(row=r, column=GD_NCOL, value="Notes")
+    c.font = FONT_HEADER; c.fill = FILL_HEADER; c.border = BD; c.alignment = ALIGN_CENTER
 
-    # Track key rows for cross-reference
+    # All 6 years iteration
+    all_years = [
+        (2023, [2,3,4,5], 6), (2024, [7,8,9,10], 11), (2025, [12,13,14,15], 16),
+        (2026, [18,19,20,21], 22), (2027, [23,24,25,26], 27), (2028, [28,29,30,31], 32),
+    ]
+    hist_years = all_years[:3]
+    fcst_years = all_years[3:]
+
     r = 6
 
-    # ---- WACC Parameters ----
-    _section(ws, r, "WACC Parameters"); r += 1
-    _arow_const(ws, r, "Risk-Free Rate (Rf)", 0.0388, 0.0425, 0.045, 0.045, "0.00%",
-                "US 10Y Treasury, May 2026"); R["asp_rf"] = r; r += 1
-    _arow_const(ws, r, "Equity Risk Premium (ERP)", 0.055, 0.055, 0.055, 0.055, "0.00%",
-                "Damodaran 2026 implied ERP"); R["asp_erp"] = r; r += 1
-    _arow(ws, r, "Levered Beta (β)", 1.20, 1.35, 1.50, 1.50, 1.30, 1.80, "0.00",
-          "Bloomberg 2Y adj beta; Bear=1.80 on higher risk"); R["asp_beta"] = r; r += 1
-    _arow_const(ws, r, "Pre-Tax Cost of Debt (Kd)", 0.048, 0.05, 0.05, 0.050, "0.00%",
-                "Weighted avg coupon on outstanding notes"); R["asp_kd"] = r; r += 1
-    _arow(ws, r, "Target D/(D+E)", 0.30, 0.32, 0.32, 0.25, 0.20, 0.35, "0.0%",
-          "Long-term target; D/EV =32% at current prices"); R["asp_dtc"] = r; r += 1
-    _arow(ws, r, "Marginal Tax Rate (for WACC)", None, None, None, 0.12, 0.11, 0.15, "0.00%",
-          "Marginal rate for interest tax shield. Base=12% (aligned with Q2 2026 guided 11%)"); R["asp_etr_marginal"] = r; r += 1
-    _arow(ws, r, "Terminal Growth Rate (g)", None, None, None, 0.025, 0.030, 0.020, "0.00%",
-          "Base=2.5% LT nominal GDP+; Bull=3.0% AI secular; Bear=2.0% mature"); R["asp_tg"] = r; r += 1
+    # ============================================================
+    # Helper: write quarterly assumption with Base/Bull/Bear/Selected rows
+    # ============================================================
+    def _aq(label, hist_qvals, base_qvals, bull_qvals, bear_qvals, fmt_val, note_text, driver_type="sum"):
+        """Quarterly assumption: 5 rows (label + Base/Bull/Bear/Selected).
+        hist_qvals: dict {year: [q1,q2,q3,q4]} or None (uses annual/4 of first hist year).
+        base_qvals: dict {year: [q1,q2,q3,q4]} for forecast quarters.
+        driver_type: 'sum' -> annual=SUM(Q1:Q4), 'avg' -> annual=AVERAGE(Q1:Q4).
+        Returns: (next_row, selected_row_num)"""
+        nonlocal r
+        _label(ws, r, label)
+        r_label = r; r += 1
 
-    r += 1
-    # Derived WACC (formulas, not arow)
-    _section(ws, r, "Derived WACC"); r += 1
-    # Ke = Rf + Beta * ERP
-    _label(ws, r, "Cost of Equity (Ke)")
-    _fval(ws, r, 2, f"=I{R['asp_rf']}+I{R['asp_beta']}*I{R['asp_erp']}", "0.00%")
-    _fval(ws, r, 6, f"=F{R['asp_rf']}+F{R['asp_beta']}*F{R['asp_erp']}", "0.00%")
-    _fval(ws, r, 7, f"=G{R['asp_rf']}+G{R['asp_beta']}*G{R['asp_erp']}", "0.00%")
-    _fval(ws, r, 8, f"=H{R['asp_rf']}+H{R['asp_beta']}*H{R['asp_erp']}", "0.00%")
-    _note(ws, r, "Ke = Rf + β × ERP")
-    R["asp_ke"] = r; r += 1
-    # After-tax Kd
-    _label(ws, r, "After-Tax Cost of Debt")
-    _fval(ws, r, SEL_COL, f"=I{R['asp_kd']}*(1-I{R['asp_etr_marginal']})", "0.00%")
-    _note(ws, r, "Kd × (1 − ETR)")
-    R["asp_atkd"] = r; r += 1
-    # WACC
-    _label(ws, r, "WACC")
-    _fval(ws, r, SEL_COL, f"=I{R['asp_ke']}*(1-I{R['asp_dtc']})+I{R['asp_atkd']}*I{R['asp_dtc']}", "0.00%")
-    _note(ws, r, "WACC = Ke×(1−D/TC) + Kd(1−t)×D/TC. Links to DCF tab")
-    R["asp_wacc"] = r; r += 1
+        base_r = r; r += 1
+        bull_r = r; r += 1
+        bear_r = r; r += 1
+        sel_r = r; r += 1
 
-    # ---- Valuation Bridge ----
-    r += 1
-    _section(ws, r, "Valuation Bridge Inputs"); r += 1
-    _label(ws, r, "Cash & Equivalents ($M) — from BS")
-    _note(ws, r, "To be linked from BS post-build (hardcoded anchor for DCF bridge)")
-    R["asp_cash_bridge"] = r; r += 1
-    _label(ws, r, "Total Debt ($M) — from BS")
-    R["asp_debt_bridge"] = r; r += 1
+        # Column indices for iteration
+        all_qcols = []
+        for yr, qcols, ann_col in all_years:
+            all_qcols.append((yr, qcols, ann_col))
+        hist_qcols = [(yr, qcols, ann_col) for yr, qcols, ann_col in hist_years]
+        fcst_qcols = [(yr, qcols, ann_col) for yr, qcols, ann_col in fcst_years]
 
-    # ---- Revenue Growth ----
-    r += 1
-    _section(ws, r, "Revenue Growth Assumptions"); r += 1
+        ann_fn = "SUM" if driver_type == "sum" else "AVERAGE"
 
-    # CCG (use _arow for single-year rows, or group by year)
-    # For each segment: 3 rows (2026E, 2027E, 2028E), each _arow with 3 scenario values
-    for seg_key, seg_label, h2024, h2025, yrs in [
-        ("ccg", "CCG Revenue Growth", 3.2, -3.4,
-         [("2026E", 2.0, 5.0, -3.0, "Supply recovery offsets PC TAM decline"),
-          ("2027E", 3.0, 6.0, 0.0, "Modest PC unit growth + AI PC ASP lift"),
-          ("2028E", 3.0, 5.0, 1.0, "Maturing AI PC cycle")]),
-        ("dcai", "DCAI Revenue Growth", 0.9, 4.9,
-         [("2026E", 18.0, 25.0, 10.0, "Supply recovery + CPU demand + ASIC ramp"),
-          ("2027E", 12.0, 18.0, 5.0, "Moderates as base effect kicks in"),
-          ("2028E", 8.0, 12.0, 2.0, "CPU structural demand from AI inference")]),
-        ("foundry", "Intel Foundry Revenue Growth", -6.4, 2.9,
-         [("2026E", 12.0, 18.0, 5.0, "EUV node ramp + internal product demand"),
-          ("2027E", 10.0, 20.0, 3.0, "External customer + adv packaging ramps"),
-          ("2028E", 10.0, 18.0, 3.0, "14A early revenue possible")]),
-        ("allother", "All Other Revenue Growth", -34.1, -1.1,
-         [("2026E", -5.0, 5.0, -15.0, "Mobileye headwinds + Altera deconsolidation"),
-          ("2027E", 8.0, 15.0, -5.0, "Mobileye recovery as SuperVision ramps"),
-          ("2028E", 8.0, 12.0, 2.0, "Mobileye+IMS sustained growth")]),
-    ]:
-        for yr_label, base, bull, bear, note_txt in yrs:
-            label = f"  {seg_label} {yr_label}"
-            _arow(ws, r, label, None, h2024/100.0, h2025/100.0, base/100.0, bull/100.0, bear/100.0, "0.0%", note_txt)
-            R[f"asp_{seg_key}_g_{yr_label.lower()}"] = r
-            r += 1
-        r += 1  # spacer between segments
+        for scenario, srow in [("Base", base_r), ("Bull", bull_r), ("Bear", bear_r)]:
+            ws.cell(row=srow, column=1, value=f"  {scenario}").font = Font(bold=True, size=10, name="Calibri")
+            ws.cell(row=srow, column=1).border = BD
+            # Historical: same across scenarios, put in Base row only (leave Bull/Bear blank for clarity)
+            if scenario == "Base":
+                for yr, qcols, ann_col in hist_years:
+                    qv = hist_qvals.get(yr) if hist_qvals else None
+                    for qi, qc in enumerate(qcols):
+                        if qv:
+                            _hval(ws, srow, qc, qv[qi], fmt_val)
+                        else:
+                            ws.cell(row=srow, column=qc).border = BD
+                    if qv:
+                        if driver_type == "sum":
+                            _fval(ws, srow, ann_col, f"=SUM({CL(qcols[0])}{srow}:{CL(qcols[3])}{srow})", fmt_val)
+                        else:
+                            _fval(ws, srow, ann_col, f"=AVERAGE({CL(qcols[0])}{srow}:{CL(qcols[3])}{srow})", fmt_val)
+                    else:
+                        ws.cell(row=srow, column=ann_col).border = BD
+            else:
+                for yr, qcols, ann_col in hist_years:
+                    for qc in qcols:
+                        ws.cell(row=srow, column=qc).border = BD
+                    ws.cell(row=srow, column=ann_col).border = BD
+            # Forecast: editable quarterly values (blue fill)
+            for yr, qcols, ann_col in fcst_years:
+                qv = {"Base": base_qvals, "Bull": bull_qvals, "Bear": bear_qvals}[scenario].get(yr)
+                for qi, qc in enumerate(qcols):
+                    if qv:
+                        c = ws.cell(row=srow, column=qc, value=qv[qi])
+                        c.number_format = fmt_val
+                        c.font = Font(color="000000", size=10, name="Calibri")
+                        c.fill = FILL_ASSUMP
+                        c.border = BD
+                        c.alignment = ALIGN_RIGHT
+                    else:
+                        ws.cell(row=srow, column=qc).border = BD
+                # Annual = SUM/AVERAGE of quarters
+                if qv:
+                    if driver_type == "sum":
+                        _fval(ws, srow, ann_col, f"=SUM({CL(qcols[0])}{srow}:{CL(qcols[3])}{srow})", fmt_val)
+                    else:
+                        _fval(ws, srow, ann_col, f"=AVERAGE({CL(qcols[0])}{srow}:{CL(qcols[3])}{srow})", fmt_val)
+                else:
+                    ws.cell(row=srow, column=ann_col).border = BD
+            # Spacer + note cols
+            for sc in [17, 33, 34]:
+                ws.cell(row=srow, column=sc).border = BD
 
-    # ---- Bottom-Up Growth Drivers: CCG ----
-    r += 1
+        # Selected row
+        ws.cell(row=sel_r, column=1, value="  SELECTED").font = Font(bold=True, size=10, name="Calibri", color="1F4E79")
+        ws.cell(row=sel_r, column=1).border = BD
+        # Historical: hardcoded (same as Base)
+        for yr, qcols, ann_col in hist_years:
+            qv = hist_qvals.get(yr) if hist_qvals else None
+            for qi, qc in enumerate(qcols):
+                if qv:
+                    _hval(ws, sel_r, qc, qv[qi], fmt_val)
+                else:
+                    ws.cell(row=sel_r, column=qc).border = BD
+            if qv:
+                if driver_type == "sum":
+                    _fval(ws, sel_r, ann_col, f"=SUM({CL(qcols[0])}{sel_r}:{CL(qcols[3])}{sel_r})", fmt_val)
+                else:
+                    _fval(ws, sel_r, ann_col, f"=AVERAGE({CL(qcols[0])}{sel_r}:{CL(qcols[3])}{sel_r})", fmt_val)
+            else:
+                ws.cell(row=sel_r, column=ann_col).border = BD
+        # Forecast: CHOOSE/MATCH per quarter
+        for yr, qcols, ann_col in fcst_years:
+            for qc in qcols:
+                cl = CL(qc)
+                formula = f'=CHOOSE(MATCH({SCENARIO_CELL},{{"Base","Bull","Bear"}},0),{cl}{base_r},{cl}{bull_r},{cl}{bear_r})'
+                c = ws.cell(row=sel_r, column=qc, value=formula)
+                c.number_format = fmt_val
+                c.font = FONT_BOLD
+                c.border = BD
+                c.alignment = ALIGN_RIGHT
+            if driver_type == "sum":
+                _fval(ws, sel_r, ann_col, f"=SUM({CL(qcols[0])}{sel_r}:{CL(qcols[3])}{sel_r})", fmt_val)
+            else:
+                _fval(ws, sel_r, ann_col, f"=AVERAGE({CL(qcols[0])}{sel_r}:{CL(qcols[3])}{sel_r})", fmt_val)
+        for sc in [17, 33, 34]:
+            ws.cell(row=sel_r, column=sc).border = BD
+        # Notes
+        c = ws.cell(row=sel_r, column=GD_NCOL, value=note_text)
+        c.font = Font(size=9, name="Calibri"); c.alignment = ALIGN_LEFT
+
+        # Fill key cells with yellow for Selected row annual cols
+        for yr, qcols, ann_col in fcst_years:
+            ws.cell(row=sel_r, column=ann_col).fill = FILL_KEY
+
+        r += 1  # blank row after each driver group
+        return sel_r
+
+    # ============================================================
+    # Helper: annual-only parameter (still uses Base/Bull/Bear rows but only annual columns)
+    # ============================================================
+    def _a_annual(label, hist_vals, base_vals, bull_vals, bear_vals, fmt_val, note_text):
+        """Annual parameter: Base/Bull/Bear rows, values only in FY columns (6,11,16,22,27,32)."""
+        nonlocal r
+        _label(ws, r, label)
+        r += 1
+        base_r = r; r += 1
+        bull_r = r; r += 1
+        bear_r = r; r += 1
+        sel_r = r; r += 2
+
+        ann_hist = [6, 11, 16]
+        ann_fcst = [22, 27, 32]
+
+        for scenario, srow, vals in [("Base", base_r, base_vals), ("Bull", bull_r, bull_vals), ("Bear", bear_r, bear_vals)]:
+            ws.cell(row=srow, column=1, value=f"  {scenario}").font = Font(bold=True, size=10, name="Calibri")
+            ws.cell(row=srow, column=1).border = BD
+            # Historical (same across all, only in Base)
+            if scenario == "Base":
+                for ci, ac in enumerate(ann_hist):
+                    if hist_vals and ci < len(hist_vals) and hist_vals[ci] is not None:
+                        _hval(ws, srow, ac, hist_vals[ci], fmt_val)
+                    else:
+                        ws.cell(row=srow, column=ac).border = BD
+            else:
+                for ac in ann_hist:
+                    ws.cell(row=srow, column=ac).border = BD
+            # Forecast
+            for fi, ac in enumerate(ann_fcst):
+                if vals and fi < len(vals):
+                    c = ws.cell(row=srow, column=ac, value=vals[fi])
+                    c.number_format = fmt_val
+                    c.font = Font(color="000000", size=10, name="Calibri")
+                    c.fill = FILL_ASSUMP
+                    c.border = BD
+                    c.alignment = ALIGN_RIGHT
+                else:
+                    ws.cell(row=srow, column=ac).border = BD
+            for sc in [17, 33, 34]:
+                ws.cell(row=srow, column=sc).border = BD
+
+        # Selected row
+        ws.cell(row=sel_r, column=1, value="  SELECTED").font = Font(bold=True, size=10, name="Calibri", color="1F4E79")
+        ws.cell(row=sel_r, column=1).border = BD
+        for ci, ac in enumerate(ann_hist):
+            if hist_vals and ci < len(hist_vals) and hist_vals[ci] is not None:
+                _hval(ws, sel_r, ac, hist_vals[ci], fmt_val)
+            else:
+                ws.cell(row=sel_r, column=ac).border = BD
+        for ac in ann_fcst:
+            cl = CL(ac)
+            formula = f'=CHOOSE(MATCH({SCENARIO_CELL},{{"Base","Bull","Bear"}},0),{cl}{base_r},{cl}{bull_r},{cl}{bear_r})'
+            c = ws.cell(row=sel_r, column=ac, value=formula)
+            c.number_format = fmt_val
+            c.font = FONT_BOLD
+            c.fill = FILL_KEY
+            c.border = BD
+            c.alignment = ALIGN_RIGHT
+        for sc in [17, 33, 34]:
+            ws.cell(row=sel_r, column=sc).border = BD
+        _note(ws, sel_r, note_text)
+        return sel_r
+
+    # ============================================================
+    # BOTTOM-UP GROWTH DRIVERS: CCG
+    # ============================================================
     _section(ws, r, "CCG Bottom-Up Drivers: Revenue = PC TAM x Intel Share x ASP"); r += 1
 
-    # PC TAM
-    _label(ws, r, "PC TAM (M units) — Source: Gartner/IDC"); r += 1
-    _arow(ws, r, "  PC TAM — FY2026E", None, 241.8, 245.4, 260.0, 270.0, 250.0, "#,##0.0",
-          "Gartner: 2023=241.8M, 2024=245.4M. 2025E ~259M. Base=+0.5% modest recovery")
-    R["asp_pc_tam_2026e"] = r; r += 1
-    _arow(ws, r, "  PC TAM — FY2027E", None, None, None, 265.0, 280.0, 252.0, "#,##0.0",
-          "Windows 10 EOL refresh + AI PC adoption. Bull: strong enterprise refresh")
-    R["asp_pc_tam_2027e"] = r; r += 1
-    _arow(ws, r, "  PC TAM — FY2028E", None, None, None, 270.0, 290.0, 255.0, "#,##0.0",
-          "AI PC matures; modest long-term growth")
-    R["asp_pc_tam_2028e"] = r; r += 1
-    r += 1
+    # PC TAM — sum-type (annual split equally across quarters)
+    R["asp_pc_tam"] = _aq(
+        "PC TAM (M units) - Source: Gartner/IDC",
+        {2023: [60.45, 60.45, 60.45, 60.45], 2024: [61.35, 61.35, 61.35, 61.35], 2025: [64.65, 64.65, 64.65, 64.65]},
+        {2026: [65.0, 65.0, 65.0, 65.0], 2027: [66.25, 66.25, 66.25, 66.25], 2028: [67.5, 67.5, 67.5, 67.5]},
+        {2026: [67.5, 67.5, 67.5, 67.5], 2027: [70.0, 70.0, 70.0, 70.0], 2028: [72.5, 72.5, 72.5, 72.5]},
+        {2026: [62.5, 62.5, 62.5, 62.5], 2027: [63.0, 63.0, 63.0, 63.0], 2028: [63.75, 63.75, 63.75, 63.75]},
+        "#,##0.0",
+        "Annual TAM split equally across 4 quarters (edit individual quarters as needed). Gartner: 2023=241.8M, 2024=245.4M, 2025~259M.",
+        "sum"
+    )
 
-    # Intel Unit Share
-    _label(ws, r, "Intel PC Unit Share (%) — Source: Mercury Research"); r += 1
-    _arow(ws, r, "  Intel Share — FY2026E", None, 0.71, 0.715, 0.72, 0.74, 0.70, "0.0%",
-          "Mercury est: Q4'24 ~72%. 18A products competitive; share recovery assumed")
-    R["asp_intel_share_2026e"] = r; r += 1
-    _arow(ws, r, "  Intel Share — FY2027E", None, None, None, 0.725, 0.75, 0.69, "0.0%",
-          "Panther Lake + Nova Lake sustain competitiveness")
-    R["asp_intel_share_2027e"] = r; r += 1
-    _arow(ws, r, "  Intel Share — FY2028E", None, None, None, 0.73, 0.76, 0.68, "0.0%",
-          "Continued share recovery with leading-edge nodes")
-    R["asp_intel_share_2028e"] = r; r += 1
-    r += 1
+    # Intel PC Unit Share — avg-type (same % each quarter)
+    R["asp_intel_share"] = _aq(
+        "Intel PC Unit Share (%) - Source: Mercury Research",
+        {2023: [0.710, 0.710, 0.710, 0.710], 2024: [0.715, 0.715, 0.715, 0.715], 2025: [0.720, 0.720, 0.720, 0.720]},
+        {2026: [0.72, 0.72, 0.72, 0.72], 2027: [0.725, 0.725, 0.725, 0.725], 2028: [0.73, 0.73, 0.73, 0.73]},
+        {2026: [0.74, 0.74, 0.74, 0.74], 2027: [0.75, 0.75, 0.75, 0.75], 2028: [0.76, 0.76, 0.76, 0.76]},
+        {2026: [0.70, 0.70, 0.70, 0.70], 2027: [0.69, 0.69, 0.69, 0.69], 2028: [0.68, 0.68, 0.68, 0.68]},
+        "0.0%",
+        "Mercury est: ~72%. 18A products competitive; share recovery assumed. Edit quarterly for seasonal patterns.",
+        "avg"
+    )
 
-    # Blended ASP
-    _label(ws, r, "Intel CCG Blended ASP ($) — Derived from Rev/(TAM×Share)"); r += 1
-    _arow(ws, r, "  CCG ASP — FY2026E", None, 188.0, 190.0, 175.0, 180.0, 170.0, "0.0",
-          "FY2025 ASP depressed. Q1 2026 +16% YoY. Base: ASP recovery + premium mix")
-    R["asp_ccg_asp_2026e"] = r; r += 1
-    _arow(ws, r, "  CCG ASP — FY2027E", None, None, None, 182.0, 190.0, 172.0, "0.0",
-          "AI PC (Core Ultra) mix continues to lift ASP")
-    R["asp_ccg_asp_2027e"] = r; r += 1
-    _arow(ws, r, "  CCG ASP — FY2028E", None, None, None, 184.0, 195.0, 174.0, "0.0",
-          "Premium mix + pricing discipline")
-    R["asp_ccg_asp_2028e"] = r; r += 1
+    # CCG Blended ASP — avg-type
+    R["asp_ccg_asp"] = _aq(
+        "Intel CCG Blended ASP ($) - Derived from Rev/(TAMxShare)",
+        {2023: [188, 188, 188, 188], 2024: [190, 190, 190, 190], 2025: [173, 173, 173, 173]},
+        {2026: [175, 175, 175, 175], 2027: [182, 182, 182, 182], 2028: [184, 184, 184, 184]},
+        {2026: [180, 180, 180, 180], 2027: [190, 190, 190, 190], 2028: [195, 195, 195, 195]},
+        {2026: [170, 170, 170, 170], 2027: [172, 172, 172, 172], 2028: [174, 174, 174, 174]},
+        "0.0",
+        "FY2025 ASP depressed. Q1 2026 +16% YoY. Base: ASP recovery + premium mix. Edit quarterly for product launch timing.",
+        "avg"
+    )
 
-    # ---- Bottom-Up Growth Drivers: DCAI ----
-    r += 1
+    # ============================================================
+    # DCAI Bottom-Up Drivers
+    # ============================================================
     _section(ws, r, "DCAI Bottom-Up Drivers: CPU Rev = Server TAM x Share x ASP + AI/ASIC Rev"); r += 1
 
-    # Server TAM
-    _label(ws, r, "Server TAM (M units) — Source: IDC"); r += 1
-    _arow(ws, r, "  Server TAM — FY2026E", None, 11.5, 12.0, 13.5, 14.5, 12.5, "#,##0.0",
-          "IDC est: 2023=11.5M, 2024=12.0M. AI buildout driving 2025+. Base: +12%")
-    R["asp_svr_tam_2026e"] = r; r += 1
-    _arow(ws, r, "  Server TAM — FY2027E", None, None, None, 14.5, 16.0, 13.0, "#,##0.0",
-          "Hyperscale + enterprise AI infra. Bull: accelerated buildout")
-    R["asp_svr_tam_2027e"] = r; r += 1
-    _arow(ws, r, "  Server TAM — FY2028E", None, None, None, 15.5, 17.5, 13.5, "#,##0.0",
-          "CPU inference demand structural?")
-    R["asp_svr_tam_2028e"] = r; r += 1
-    r += 1
+    R["asp_svr_tam"] = _aq(
+        "Server TAM (M units) - Source: IDC",
+        {2023: [2.875, 2.875, 2.875, 2.875], 2024: [3.0, 3.0, 3.0, 3.0], 2025: [3.375, 3.375, 3.375, 3.375]},
+        {2026: [3.375, 3.375, 3.375, 3.375], 2027: [3.625, 3.625, 3.625, 3.625], 2028: [3.875, 3.875, 3.875, 3.875]},
+        {2026: [3.625, 3.625, 3.625, 3.625], 2027: [4.0, 4.0, 4.0, 4.0], 2028: [4.375, 4.375, 4.375, 4.375]},
+        {2026: [3.125, 3.125, 3.125, 3.125], 2027: [3.25, 3.25, 3.25, 3.25], 2028: [3.375, 3.375, 3.375, 3.375]},
+        "#,##0.0",
+        "IDC: 2023=11.5M, 2024=12.0M, 2025~13.5M. AI buildout driving growth. Equal quarterly allocation (edit for seasonality).",
+        "sum"
+    )
 
-    # Intel DC Unit Share
-    _label(ws, r, "Intel DC Server Unit Share (%) — Source: Mercury Research"); r += 1
-    _arow(ws, r, "  Intel DC Share — FY2026E", None, 0.76, 0.73, 0.70, 0.72, 0.67, "0.0%",
-          "Mercury: Q4'24 ~72%. Granite Rapids improving; AMD Turin competitive. Base: share stabilizes")
-    R["asp_intel_dc_share_2026e"] = r; r += 1
-    _arow(ws, r, "  Intel DC Share — FY2027E", None, None, None, 0.70, 0.73, 0.65, "0.0%",
-          "Coral Rapids + Clearwater Forest on 18A. Bull: share recovers")
-    R["asp_intel_dc_share_2027e"] = r; r += 1
-    _arow(ws, r, "  Intel DC Share — FY2028E", None, None, None, 0.70, 0.74, 0.63, "0.0%",
-          "Sustained competitiveness on 18A/14A")
-    R["asp_intel_dc_share_2028e"] = r; r += 1
-    r += 1
+    R["asp_intel_dc_share"] = _aq(
+        "Intel DC Server Unit Share (%) - Source: Mercury Research",
+        {2023: [0.775, 0.775, 0.775, 0.775], 2024: [0.760, 0.760, 0.760, 0.760], 2025: [0.730, 0.730, 0.730, 0.730]},
+        {2026: [0.70, 0.70, 0.70, 0.70], 2027: [0.70, 0.70, 0.70, 0.70], 2028: [0.70, 0.70, 0.70, 0.70]},
+        {2026: [0.72, 0.72, 0.72, 0.72], 2027: [0.73, 0.73, 0.73, 0.73], 2028: [0.74, 0.74, 0.74, 0.74]},
+        {2026: [0.67, 0.67, 0.67, 0.67], 2027: [0.65, 0.65, 0.65, 0.65], 2028: [0.63, 0.63, 0.63, 0.63]},
+        "0.0%",
+        "Mercury: Q4'24 ~72%. Granite Rapids improving; AMD Turin competitive. Base: share stabilizes.",
+        "avg"
+    )
 
-    # Server ASP
-    _label(ws, r, "Intel Server Blended ASP ($) — Derived from CPU Rev/(TAM×Share)"); r += 1
-    _arow(ws, r, "  Server ASP — FY2026E", None, 1770, 1650, 1600, 1750, 1500, "0",
-          "FY2025 ASP depressed. Q1 2026 +27% YoY. Base: premium mix recovery")
-    R["asp_dc_asp_2026e"] = r; r += 1
-    _arow(ws, r, "  Server ASP — FY2027E", None, None, None, 1700, 1850, 1550, "0",
-          "Granite Rapids/Coral Rapids premium cores support ASP")
-    R["asp_dc_asp_2027e"] = r; r += 1
-    _arow(ws, r, "  Server ASP — FY2028E", None, None, None, 1750, 1950, 1580, "0",
-          "Mix shift to high-core-count AI-adjacent CPUs")
-    R["asp_dc_asp_2028e"] = r; r += 1
-    r += 1
+    R["asp_dc_asp"] = _aq(
+        "Intel Server Blended ASP ($) - Derived from CPU Rev/(TAMxShare)",
+        {2023: [1772, 1772, 1772, 1772], 2024: [1712, 1712, 1712, 1712], 2025: [1632, 1632, 1632, 1632]},
+        {2026: [1600, 1600, 1600, 1600], 2027: [1700, 1700, 1700, 1700], 2028: [1750, 1750, 1750, 1750]},
+        {2026: [1750, 1750, 1750, 1750], 2027: [1850, 1850, 1850, 1850], 2028: [1950, 1950, 1950, 1950]},
+        {2026: [1500, 1500, 1500, 1500], 2027: [1550, 1550, 1550, 1550], 2028: [1580, 1580, 1580, 1580]},
+        "#,##0",
+        "FY2025 ASP depressed. Q1 2026 +27% YoY. Base: premium mix recovery. Edit quarterly for product cycle effects.",
+        "avg"
+    )
 
-    # AI/ASIC Revenue
-    _label(ws, r, "AI/ASIC & Other Revenue ($M) — Gaudi, ASICs, NICs, IPUs"); r += 1
-    _arow(ws, r, "  AI/ASIC Rev — FY2026E", None, 500, 800, 2800, 3500, 2000, "#,##0",
-          "ASIC run rate 'north of $1B' Q1 2026, nearly doubling YoY. Gaudi modest. Base: +75%")
-    R["asp_ai_asic_2026e"] = r; r += 1
-    _arow(ws, r, "  AI/ASIC Rev — FY2027E", None, None, None, 4500, 6000, 3000, "#,##0",
-          "ASICs scaling; custom silicon deals (Google, others)")
-    R["asp_ai_asic_2027e"] = r; r += 1
-    _arow(ws, r, "  AI/ASIC Rev — FY2028E", None, None, None, 6000, 8500, 3800, "#,##0",
-          "Custom ASIC pipeline + networking attach")
-    R["asp_ai_asic_2028e"] = r; r += 1
+    R["asp_ai_asic"] = _aq(
+        "AI/ASIC & Other Revenue ($M) - Gaudi, ASICs, NICs, IPUs",
+        {2023: [50, 50, 50, 50], 2024: [125, 125, 125, 125], 2025: [200, 200, 200, 200]},
+        {2026: [700, 700, 700, 700], 2027: [1125, 1125, 1125, 1125], 2028: [1500, 1500, 1500, 1500]},
+        {2026: [875, 875, 875, 875], 2027: [1500, 1500, 1500, 1500], 2028: [2125, 2125, 2125, 2125]},
+        {2026: [500, 500, 500, 500], 2027: [750, 750, 750, 750], 2028: [950, 950, 950, 950]},
+        "#,##0",
+        "ASIC run rate 'north of $1B' Q1 2026. Gaudi modest. Edit quarterly for customer ramp timing.",
+        "sum"
+    )
 
-    # ---- Segment OPM ----
-    _section(ws, r, "Segment Operating Margin Assumptions"); r += 1
-
-    for seg_key, seg_label, h23, h24, h25, yrs in [
-        ("ccg", "CCG Operating Margin", 31.4, 34.8, 28.9,
-         [("2026E", 30.0, 33.0, 27.0, "Q1 32.6% moderated by 18A ramp costs"),
-          ("2027E", 31.5, 36.0, 27.0, "18A yield maturation begins"),
-          ("2028E", 33.0, 38.0, 28.0, "Cost structure improvement")]),
-        ("dcai", "DCAI Operating Margin", 5.9, 8.8, 20.2,
-         [("2026E", 28.0, 32.0, 22.0, "Sustains near Q1 30.5% level; ASIC supports"),
-          ("2027E", 28.0, 33.0, 20.0, "Competition begins to pressure"),
-          ("2028E", 27.0, 32.0, 18.0, "Coral Rapids cycle supports")]),
-        ("foundry", "Intel Foundry Operating Margin", -38.3, -76.7, -57.9,
-         [("2026E", -42.0, -35.0, -50.0, "18A yield improvement + volume absorption"),
-          ("2027E", -32.0, -20.0, -45.0, "External revenue begins, 14A R&D costs"),
-          ("2028E", -22.0, -8.0, -40.0, "Still unprofitable; multi-year journey")]),
-        ("allother", "All Other Operating Margin", 27.6, -1.6, 7.4,
-         [("2026E", 14.0, 20.0, 8.0, "Mobileye gradual recovery"),
-          ("2027E", 18.0, 25.0, 10.0, "SuperVision/Chauffeur revenue"),
-          ("2028E", 20.0, 28.0, 12.0, "IMS growth + auto cycle improvement")]),
-    ]:
-        for yr_label, base, bull, bear, note_txt in yrs:
-            label = f"  {seg_label} {yr_label}"
-            _arow(ws, r, label, h23/100.0, h24/100.0, h25/100.0, base/100.0, bull/100.0, bear/100.0, "0.0%", note_txt)
-            R[f"asp_{seg_key}_opm_{yr_label.lower()}"] = r
-            r += 1
-        r += 1
-
-    # ---- Consolidated Cost Structure ----
-    _section(ws, r, "Consolidated Cost Structure"); r += 1
-
-    # Gross Margin → COGS%
-    for yr_label, base_gm, bull_gm, bear_gm, note_txt in [
-        ("2026E", 38.5, 41.0, 36.0, "Q1 39.4% base; 18A mix headwind offset by yield gains"),
-        ("2027E", 41.0, 45.0, 37.0, "Structural improvement as 18A matures"),
-        ("2028E", 43.5, 49.0, 38.0, "Approaching historical 40%+ levels"),
-    ]:
-        _arow(ws, r, f"  COGS as % of Revenue {yr_label}", 0.60, 0.673, 0.652,
-              (100.0 - base_gm)/100.0, (100.0 - bull_gm)/100.0, (100.0 - bear_gm)/100.0, "0.0%",
-              f"GM={base_gm}%/{bull_gm}%/{bear_gm}%. {note_txt}")
-        R[f"asp_cogs_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # R&D %
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 26.0, 25.0, 28.0, "~$14.5B absolute; declining as % of growing revenue"),
-        ("2027E", 25.0, 23.0, 28.0, "~$15.5B absolute; efficiency gains"),
-        ("2028E", 24.0, 21.0, 27.0, "~$16.0B absolute; 14A R&D investment"),
-    ]:
-        _arow(ws, r, f"  R&D % of Revenue {yr_label}", 0.296, 0.312, 0.261, base/100.0, bull/100.0, bear/100.0, "0.0%", note_txt)
-        R[f"asp_rd_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # MG&A %
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 8.0, 7.5, 9.0, "~$4.5B flat absolute"),
-        ("2027E", 7.5, 6.5, 9.0, "Declining as % of growing revenue"),
-        ("2028E", 7.0, 6.0, 8.5, "Further efficiency from restructuring"),
-    ]:
-        _arow(ws, r, f"  MG&A % of Revenue {yr_label}", 0.104, 0.104, 0.087, base/100.0, bull/100.0, bear/100.0, "0.0%", note_txt)
-        R[f"asp_mga_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # D&A (absolute)
-    _label(ws, r, "D&A ($M absolute)"); r += 1
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 12500, 12000, 13000, "Q1 annualised ~$12.5B; CIP→in-service driving growth"),
-        ("2027E", 13200, 12500, 14000, "Continued fab asset placement"),
-        ("2028E", 13800, 12800, 15000, "Partially offset by govt incentives"),
-    ]:
-        _arow(ws, r, f"    {yr_label}", 7847, 9951, 10757, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_da_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # SBC (absolute)
-    _arow_const(ws, r, "SBC ($M absolute) — FY2026E", 3229, 3410, 2434, 2500, "#,##0", "Q1 2026 annualised ~$2.5B")
-    R["asp_sbc"] = r; r += 1
-
-    # Restructuring
-    _arow_const(ws, r, "Restructuring & Other Charges ($M)", -62, 6970, 2191, 500, "#,##0", "Winding down; plans substantially complete")
-    R["asp_restruct"] = r; r += 1
-
-    # ---- Working Capital ----
-    r += 1
-    _section(ws, r, "Working Capital Assumptions"); r += 1
-    _arow_const(ws, r, "AR Days", 22.9, 23.9, 26.5, 25, "#,##0.0", "Historical range 22-27 days"); R["asp_ar_days"] = r; r += 1
-    _arow_const(ws, r, "AP Days", 96.3, 128.2, 104.6, 100, "#,##0.0", "Normalised from FY2024 peak (vendor terms)"); R["asp_ap_days"] = r; r += 1
-    _arow_const(ws, r, "Inventory Days", 124.9, 124.5, 123.0, 125, "#,##0.0", "Remarkably stable at ~124 days"); R["asp_inv_days"] = r; r += 1
-    _arow_const(ws, r, "Accrued Comp % of Revenue", 0.067, 0.063, 0.076, 0.07, "0.0%", "Midpoint of historical range"); R["asp_accrued_comp"] = r; r += 1
-    _arow_const(ws, r, "Other CA % of Revenue", None, None, None, 0.15, "0.0%", "Includes ~$7.5B refundable tax credits"); R["asp_other_ca"] = r; r += 1
-    _arow_const(ws, r, "Other CL % of Revenue", None, None, None, 0.25, "0.0%", "Stable relationship"); R["asp_other_cl"] = r; r += 1
-    _arow_const(ws, r, "Income Tax Payable % of Revenue", None, None, None, 0.02, "0.0%", "Normalised level"); R["asp_tax_payable"] = r; r += 1
-
-    # ---- CapEx ----
-    r += 1
-    _section(ws, r, "Capital Expenditure ($M Gross)"); r += 1
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 17700, 17500, 18000, "Flat YoY per mgmt guidance; tool-heavy"),
-        ("2027E", 19500, 22000, 17000, "External customer commitments begin"),
-        ("2028E", 21000, 25000, 16000, "14A capacity buildout in Bull"),
-    ]:
-        _arow(ws, r, f"    {yr_label}", 25750, 25122, 17672, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_capex_{yr_label.lower()}"] = r
-        r += 1
-
-    # ---- Financing ----
-    r += 1
-    _section(ws, r, "Financing Assumptions"); r += 1
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 49500, 47000, 52000, "+$6.5B Fab34 loan −$2.5B maturities"),
-        ("2027E", 47200, 43000, 54000, "−$3.8B maturities repaid"),
-        ("2028E", 46000, 39000, 55000, "Modest net reduction; no new debt assumed"),
-    ]:
-        _arow(ws, r, f"  Total Debt {yr_label} ($M)", 49266, 50011, 46585, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_debt_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # Shares
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", 5100, 5080, 5200, "Q1 5,023M + ESPP/RSU + Escrowed Share releases"),
-        ("2027E", 5180, 5120, 5400, "Modest ongoing dilution"),
-        ("2028E", 5250, 5150, 5600, "Bear: additional strategic equity raises possible"),
-    ]:
-        _arow(ws, r, f"  Basic Shares {yr_label} (M)", 4228, 4330, 4994, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_shares_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    _arow_const(ws, r, "DPS ($/share)", 0.74, 0.38, 0.00, 0.00, "0.00", "Dividends suspended; no reinstatement expected")
-    R["asp_dps"] = r; r += 1
-    _arow_const(ws, r, "Net Equity Issuance ($M)", None, None, None, 300, "#,##0", "ESPP proceeds net of RSU withholdings")
-    R["asp_net_eq_iss"] = r; r += 1
-
-    # ---- Tax & Non-Operating ----
-    r += 1
-    _section(ws, r, "Tax & Non-Operating Items"); r += 1
-    _arow(ws, r, "Tax Rate — FY2026E", -1.198, -0.716, 0.983, 0.12, 0.11, 0.15, "0.0%",
-          "Anchored to Q2 2026 guided 11%. ETR=Effective Tax Rate for tax shield calc")
-    R["asp_etr_sel"] = r; r += 1
-    # Tax rate for each year
-    _arow(ws, r, "Tax Rate — FY2027E", None, None, None, 0.13, 0.12, 0.15, "0.0%",
-          "Valuation allowance means US losses provide no benefit")
-    R["asp_etr_2027e"] = r; r += 1
-    _arow(ws, r, "Tax Rate — FY2028E", None, None, None, 0.13, 0.12, 0.15, "0.0%",
-          "Normalising as Intel returns to sustained profitability")
-    R["asp_etr_2028e"] = r; r += 1
-    r += 1
-
-    # Interest & Other
-    for yr_label, base, bull, bear, note_txt in [
-        ("2026E", -800, -500, -1200, "Net interest on ~$50B debt (~5% coupon)"),
-        ("2027E", -600, -300, -1200, "Debt paydown reduces interest burden"),
-        ("2028E", -400, -100, -1000, "Further improvement as debt declines"),
-    ]:
-        _arow(ws, r, f"  Interest & Other, Net {yr_label} ($M)", 629, 226, 3257, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_interest_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # NCI
-    _label(ws, r, "Non-Controlling Interests ($M)")
-    _arow(ws, r, "  FY2026E", 293, 293, 293, 750, 750, 750, "#,##0", "Per mgmt: ~$250M/q Q2-Q4; Ireland SCIP NCI eliminated Apr 2026")
-    R["asp_nci_2026e"] = r; r += 1
-    _arow_const(ws, r, "  FY2027E", None, None, None, 1100, "#,##0", "Per mgmt: ~$1.1B/year 2027-2028")
-    R["asp_nci_2027e"] = r; r += 1
-    _arow_const(ws, r, "  FY2028E", None, None, None, 1100, "#,##0", "Arizona SCIP + Mobileye NCI ongoing")
-    R["asp_nci_2028e"] = r; r += 1
-
-    # ---- Corporate ----
-    r += 1
-    _section(ws, r, "Corporate & Eliminations"); r += 1
-    for yr_label, val, note_txt in [
-        ("2026E", -5000, "Declining restructuring + SBC reallocation"),
-        ("2027E", -4500, "Further restructuring benefit"),
-        ("2028E", -4000, "Stable run-rate"),
-    ]:
-        _arow_const(ws, r, f"  Corporate Unallocated {yr_label} ($M)", None, None, None, val, "#,##0", note_txt)
-        R[f"asp_corp_unalloc_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
-
-    # ---- Bottom-Up Growth Drivers: Intel Foundry ----
-    r += 1
+    # ============================================================
+    # Intel Foundry Bottom-Up Drivers
+    # ============================================================
     _section(ws, r, "Intel Foundry Bottom-Up Drivers: Internal Rev = Total Chip Vol x Rev/Chip + External"); r += 1
 
-    # Internal Foundry Rev per Chip
-    _label(ws, r, "Internal Foundry Rev per Chip ($/unit) — Internal Foundry Rev / Total Intel Units"); r += 1
-    _arow(ws, r, "  Internal Foundry Rev/Chip — FY2026E", 102.2, 93.5, 90.1, 90.0, 98.0, 82.0, "0.0",
-          "Declining trend: FY2023 $102.2 -> FY2025 $90.1. Stabilizes as 18A premium wafers ramp")
-    R["asp_foundry_rev_per_chip_2026e"] = r; r += 1
-    _arow(ws, r, "  Internal Foundry Rev/Chip — FY2027E", None, None, None, 92.0, 105.0, 80.0, "0.0",
-          "18A maturity supports modest ASP improvement")
-    R["asp_foundry_rev_per_chip_2027e"] = r; r += 1
-    _arow(ws, r, "  Internal Foundry Rev/Chip — FY2028E", None, None, None, 95.0, 110.0, 78.0, "0.0",
-          "14A early adopter premium + 18A volume scale")
-    R["asp_foundry_rev_per_chip_2028e"] = r; r += 1
-    # ---- Bottom-Up Growth Drivers: All Other (Mobileye + IMS + Other) ----
-    r += 1
+    R["asp_foundry_rev_per_chip"] = _aq(
+        "Internal Foundry Rev per Chip ($/unit) - Internal Foundry Rev / Total Intel Units",
+        {2023: [102.2, 102.2, 102.2, 102.2], 2024: [93.5, 93.5, 93.5, 93.5], 2025: [90.1, 90.1, 90.1, 90.1]},
+        {2026: [90, 90, 90, 90], 2027: [92, 92, 92, 92], 2028: [95, 95, 95, 95]},
+        {2026: [98, 98, 98, 98], 2027: [105, 105, 105, 105], 2028: [110, 110, 110, 110]},
+        {2026: [82, 82, 82, 82], 2027: [80, 80, 80, 80], 2028: [78, 78, 78, 78]},
+        "0.0",
+        "Declining trend stabilizes as 18A premium wafers ramp. Edit quarterly for node transition effects.",
+        "avg"
+    )
+
+    R["asp_ext_foundry"] = _aq(
+        "External Foundry Revenue ($M) - 3rd-party wafer customers",
+        {2023: [12.5, 12.5, 12.5, 12.5], 2024: [15, 15, 15, 15], 2025: [37.5, 37.5, 37.5, 37.5]},
+        {2026: [175, 175, 175, 175], 2027: [375, 375, 375, 375], 2028: [625, 625, 625, 625]},
+        {2026: [250, 250, 250, 250], 2027: [750, 750, 750, 750], 2028: [1250, 1250, 1250, 1250]},
+        {2026: [100, 100, 100, 100], 2027: [200, 200, 200, 200], 2028: [300, 300, 300, 300]},
+        "#,##0",
+        "~$150M FY2025. Growing as 18A/14A external PDK ramps. Edit quarterly for customer win timing.",
+        "sum"
+    )
+
+    # ============================================================
+    # All Other Bottom-Up Drivers
+    # ============================================================
     _section(ws, r, "All Other Bottom-Up Drivers: Mobileye (LV Prod x Rev/Veh) + IMS/Other"); r += 1
 
-    # Global Light Vehicle Production
-    _label(ws, r, "Global Light Vehicle Production (M units) — Source: IHS/S&P Global Mobility"); r += 1
-    _arow(ws, r, "  Global LV Production — FY2026E", 89.0, 88.0, 87.0, 88.0, 90.0, 85.0, "#,##0.0",
-          "IHS/S&P Global Mobility. FY2025 ~87M. Modest recovery in Base case")
-    R["asp_lv_prod_2026e"] = r; r += 1
-    _arow(ws, r, "  Global LV Production — FY2027E", None, None, None, 89.0, 92.0, 86.0, "#,##0.0",
-          "Moderate global auto production growth")
-    R["asp_lv_prod_2027e"] = r; r += 1
-    _arow(ws, r, "  Global LV Production — FY2028E", None, None, None, 90.0, 94.0, 87.0, "#,##0.0",
-          "Steady growth trajectory")
-    R["asp_lv_prod_2028e"] = r; r += 1
-    r += 1
+    R["asp_lv_prod"] = _aq(
+        "Global Light Vehicle Production (M units) - Source: IHS/S&P Global Mobility",
+        {2023: [22.25, 22.25, 22.25, 22.25], 2024: [22.0, 22.0, 22.0, 22.0], 2025: [21.75, 21.75, 21.75, 21.75]},
+        {2026: [22.0, 22.0, 22.0, 22.0], 2027: [22.25, 22.25, 22.25, 22.25], 2028: [22.5, 22.5, 22.5, 22.5]},
+        {2026: [22.5, 22.5, 22.5, 22.5], 2027: [23.0, 23.0, 23.0, 23.0], 2028: [23.5, 23.5, 23.5, 23.5]},
+        {2026: [21.25, 21.25, 21.25, 21.25], 2027: [21.5, 21.5, 21.5, 21.5], 2028: [21.75, 21.75, 21.75, 21.75]},
+        "#,##0.0",
+        "IHS/S&P Global Mobility. FY2025 ~87M. Modest recovery in Base case.",
+        "sum"
+    )
 
-    # Mobileye Rev per Vehicle
-    _label(ws, r, "Mobileye Rev per Vehicle ($/vehicle) — Derived from Mobileye Rev / LV Production"); r += 1
-    _arow(ws, r, "  Mobileye Rev/Vehicle — FY2026E", 23.4, 18.9, 21.8, 19.0, 21.0, 17.0, "0.0",
-          "FY2025 actual: Mobileye $1.9B / 87M LV = $21.8. Q1 2026 $628M. Base: conservatively ~$19")
-    R["asp_mbly_rev_per_veh_2026e"] = r; r += 1
-    _arow(ws, r, "  Mobileye Rev/Vehicle — FY2027E", None, None, None, 20.0, 23.0, 17.5, "0.0",
-          "SuperVision/Chauffeur premium systems partially offset EyeQ ASP pressure")
-    R["asp_mbly_rev_per_veh_2027e"] = r; r += 1
-    _arow(ws, r, "  Mobileye Rev/Vehicle — FY2028E", None, None, None, 21.0, 25.0, 18.0, "0.0",
-          "Advanced ADAS mix shift supports ASP recovery")
-    R["asp_mbly_rev_per_veh_2028e"] = r; r += 1
-    r += 1
+    R["asp_mbly_rev_per_veh"] = _aq(
+        "Mobileye Rev per Vehicle ($/vehicle) - Derived from Mobileye Rev / LV Production",
+        {2023: [23.4, 23.4, 23.4, 23.4], 2024: [18.9, 18.9, 18.9, 18.9], 2025: [21.8, 21.8, 21.8, 21.8]},
+        {2026: [19, 19, 19, 19], 2027: [20, 20, 20, 20], 2028: [21, 21, 21, 21]},
+        {2026: [21, 21, 21, 21], 2027: [23, 23, 23, 23], 2028: [25, 25, 25, 25]},
+        {2026: [17, 17, 17, 17], 2027: [17.5, 17.5, 17.5, 17.5], 2028: [18, 18, 18, 18]},
+        "0.0",
+        "FY2025 Mobileye $1.9B / 87M = $21.8. Q1 2026 $628M. Base: conservatively ~$19.",
+        "avg"
+    )
 
-    # IMS & Other Revenue
-    _label(ws, r, "IMS & Other Revenue ($M) — IMS nanofabrication tools + legacy businesses"); r += 1
-    _arow(ws, r, "  IMS & Other Rev — FY2026E", 3378, 1941, 1663, 1800, 2200, 1500, "#,##0",
-          "IMS multi-beam mask writers benefit from semi capex cycle. FY2023-24 include Altera (deconsolidated Sep 2025)")
-    R["asp_ims_other_2026e"] = r; r += 1
-    _arow(ws, r, "  IMS & Other Rev — FY2027E", None, None, None, 2000, 2600, 1600, "#,##0",
-          "IMS tool shipments driven by EUV adoption")
-    R["asp_ims_other_2027e"] = r; r += 1
-    _arow(ws, r, "  IMS & Other Rev — FY2028E", None, None, None, 2200, 3000, 1700, "#,##0",
-          "IMS steady growth + legacy business runoff")
-    R["asp_ims_other_2028e"] = r; r += 1
-    r += 1
+    R["asp_ims_other"] = _aq(
+        "IMS & Other Revenue ($M) - IMS nanofabrication tools + legacy businesses",
+        {2023: [844.5, 844.5, 844.5, 844.5], 2024: [485.25, 485.25, 485.25, 485.25], 2025: [415.75, 415.75, 415.75, 415.75]},
+        {2026: [450, 450, 450, 450], 2027: [500, 500, 500, 500], 2028: [550, 550, 550, 550]},
+        {2026: [550, 550, 550, 550], 2027: [650, 650, 650, 650], 2028: [750, 750, 750, 750]},
+        {2026: [375, 375, 375, 375], 2027: [400, 400, 400, 400], 2028: [425, 425, 425, 425]},
+        "#,##0",
+        "IMS multi-beam mask writers. FY2023-24 include Altera (deconsolidated Sep 2025).",
+        "sum"
+    )
 
-    # External Foundry Revenue (excludes ~99% internal wafer sales to Intel Products)
-    _section(ws, r, "External Foundry Revenue ($M Absolute)"); r += 1
-    _note(ws, r-1, "Only ~$150M in FY2025. Growing as 18A/14A external customers ramp")
-    for yr_label, h2023, h2024, h2025, base, bull, bear, note_txt in [
-        ("2026E", 0, 50, 150, 700, 1000, 400, "Q1 2026 $174M annualised + growth"),
-        ("2027E", None, None, None, 1500, 3000, 800, "18A external PDK → wafer revenue"),
-        ("2028E", None, None, None, 2500, 5000, 1200, "14A early adopters"),
-    ]:
-        _arow(ws, r, f"  External Foundry Rev {yr_label}", h2023, h2024, h2025, base, bull, bear, "#,##0", note_txt)
-        R[f"asp_ext_foundry_{yr_label.lower()}"] = r
-        r += 1
-    r += 1
+    # ============================================================
+    # SEGMENT OPERATING MARGINS — avg-type (same each quarter)
+    # ============================================================
+    _section(ws, r, "Segment Operating Margin Assumptions"); r += 1
 
-    _arow_const(ws, r, "Intersegment Eliminations ($M)", None, None, None, -200, "#,##0",
-                "Residual inter-segment elim; bulk of Foundry internal is excluded from consolidated")
-    R["asp_inter_elim"] = r; r += 1
+    R["asp_ccg_opm"] = _aq(
+        "CCG Operating Margin (%)",
+        {2023: [0.314, 0.314, 0.314, 0.314], 2024: [0.348, 0.348, 0.348, 0.348], 2025: [0.289, 0.289, 0.289, 0.289]},
+        {2026: [0.30, 0.30, 0.30, 0.30], 2027: [0.315, 0.315, 0.315, 0.315], 2028: [0.33, 0.33, 0.33, 0.33]},
+        {2026: [0.33, 0.33, 0.33, 0.33], 2027: [0.36, 0.36, 0.36, 0.36], 2028: [0.38, 0.38, 0.38, 0.38]},
+        {2026: [0.27, 0.27, 0.27, 0.27], 2027: [0.27, 0.27, 0.27, 0.27], 2028: [0.28, 0.28, 0.28, 0.28]},
+        "0.0%",
+        "Q1 32.6% moderated by 18A ramp costs. Edit quarterly for product launch margin impact.",
+        "avg"
+    )
 
-    # ---- Column widths & final touches ----
-    ws.column_dimensions['A'].width = 42
-    ws.column_dimensions['B'].width = 12
-    ws.column_dimensions['C'].width = 12
-    ws.column_dimensions['D'].width = 12
-    ws.column_dimensions['E'].width = 2
-    ws.column_dimensions['F'].width = 12
-    ws.column_dimensions['G'].width = 12
-    ws.column_dimensions['H'].width = 12
-    ws.column_dimensions['I'].width = 12
-    ws.column_dimensions['J'].width = 2
-    ws.column_dimensions['K'].width = 50
+    R["asp_dcai_opm"] = _aq(
+        "DCAI Operating Margin (%)",
+        {2023: [0.059, 0.059, 0.059, 0.059], 2024: [0.088, 0.088, 0.088, 0.088], 2025: [0.202, 0.202, 0.202, 0.202]},
+        {2026: [0.28, 0.28, 0.28, 0.28], 2027: [0.28, 0.28, 0.28, 0.28], 2028: [0.27, 0.27, 0.27, 0.27]},
+        {2026: [0.32, 0.32, 0.32, 0.32], 2027: [0.33, 0.33, 0.33, 0.33], 2028: [0.32, 0.32, 0.32, 0.32]},
+        {2026: [0.22, 0.22, 0.22, 0.22], 2027: [0.20, 0.20, 0.20, 0.20], 2028: [0.18, 0.18, 0.18, 0.18]},
+        "0.0%",
+        "Sustains near Q1 30.5% level; ASIC supports margins.",
+        "avg"
+    )
+
+    R["asp_foundry_opm"] = _aq(
+        "Intel Foundry Operating Margin (%)",
+        {2023: [-0.383, -0.383, -0.383, -0.383], 2024: [-0.767, -0.767, -0.767, -0.767], 2025: [-0.579, -0.579, -0.579, -0.579]},
+        {2026: [-0.42, -0.42, -0.42, -0.42], 2027: [-0.32, -0.32, -0.32, -0.32], 2028: [-0.22, -0.22, -0.22, -0.22]},
+        {2026: [-0.35, -0.35, -0.35, -0.35], 2027: [-0.20, -0.20, -0.20, -0.20], 2028: [-0.08, -0.08, -0.08, -0.08]},
+        {2026: [-0.50, -0.50, -0.50, -0.50], 2027: [-0.45, -0.45, -0.45, -0.45], 2028: [-0.40, -0.40, -0.40, -0.40]},
+        "0.0%",
+        "18A yield improvement + volume absorption. Still unprofitable; multi-year journey.",
+        "avg"
+    )
+
+    R["asp_allother_opm"] = _aq(
+        "All Other Operating Margin (%)",
+        {2023: [0.276, 0.276, 0.276, 0.276], 2024: [-0.016, -0.016, -0.016, -0.016], 2025: [0.074, 0.074, 0.074, 0.074]},
+        {2026: [0.14, 0.14, 0.14, 0.14], 2027: [0.18, 0.18, 0.18, 0.18], 2028: [0.20, 0.20, 0.20, 0.20]},
+        {2026: [0.20, 0.20, 0.20, 0.20], 2027: [0.25, 0.25, 0.25, 0.25], 2028: [0.28, 0.28, 0.28, 0.28]},
+        {2026: [0.08, 0.08, 0.08, 0.08], 2027: [0.10, 0.10, 0.10, 0.10], 2028: [0.12, 0.12, 0.12, 0.12]},
+        "0.0%",
+        "Mobileye gradual recovery + IMS growth.",
+        "avg"
+    )
+
+    # ============================================================
+    # CONSOLIDATED COST STRUCTURE — avg-type
+    # ============================================================
+    _section(ws, r, "Consolidated Cost Structure (% of Revenue)"); r += 1
+
+    R["asp_cogs"] = _aq(
+        "COGS as % of Revenue (=> GM% = 1 - COGS%)",
+        {2023: [0.600, 0.600, 0.600, 0.600], 2024: [0.673, 0.673, 0.673, 0.673], 2025: [0.652, 0.652, 0.652, 0.652]},
+        {2026: [0.615, 0.615, 0.615, 0.615], 2027: [0.590, 0.590, 0.590, 0.590], 2028: [0.565, 0.565, 0.565, 0.565]},
+        {2026: [0.590, 0.590, 0.590, 0.590], 2027: [0.550, 0.550, 0.550, 0.550], 2028: [0.510, 0.510, 0.510, 0.510]},
+        {2026: [0.640, 0.640, 0.640, 0.640], 2027: [0.630, 0.630, 0.630, 0.630], 2028: [0.620, 0.620, 0.620, 0.620]},
+        "0.0%",
+        "Base GM: 38.5%/41.0%/43.5%. Q1 39.4% base; 18A mix headwind offset by yield gains.",
+        "avg"
+    )
+
+    R["asp_rd"] = _aq(
+        "R&D as % of Revenue",
+        {2023: [0.296, 0.296, 0.296, 0.296], 2024: [0.312, 0.312, 0.312, 0.312], 2025: [0.261, 0.261, 0.261, 0.261]},
+        {2026: [0.260, 0.260, 0.260, 0.260], 2027: [0.250, 0.250, 0.250, 0.250], 2028: [0.240, 0.240, 0.240, 0.240]},
+        {2026: [0.250, 0.250, 0.250, 0.250], 2027: [0.230, 0.230, 0.230, 0.230], 2028: [0.210, 0.210, 0.210, 0.210]},
+        {2026: [0.280, 0.280, 0.280, 0.280], 2027: [0.280, 0.280, 0.280, 0.280], 2028: [0.270, 0.270, 0.270, 0.270]},
+        "0.0%",
+        "~$14.5B absolute in FY2026E; declining as % of growing revenue.",
+        "avg"
+    )
+
+    R["asp_mga"] = _aq(
+        "MG&A as % of Revenue",
+        {2023: [0.104, 0.104, 0.104, 0.104], 2024: [0.104, 0.104, 0.104, 0.104], 2025: [0.087, 0.087, 0.087, 0.087]},
+        {2026: [0.080, 0.080, 0.080, 0.080], 2027: [0.075, 0.075, 0.075, 0.075], 2028: [0.070, 0.070, 0.070, 0.070]},
+        {2026: [0.075, 0.075, 0.075, 0.075], 2027: [0.065, 0.065, 0.065, 0.065], 2028: [0.060, 0.060, 0.060, 0.060]},
+        {2026: [0.090, 0.090, 0.090, 0.090], 2027: [0.090, 0.090, 0.090, 0.090], 2028: [0.085, 0.085, 0.085, 0.085]},
+        "0.0%",
+        "~$4.5B flat absolute in FY2026E; declining as % of revenue.",
+        "avg"
+    )
+
+    # ============================================================
+    # ANNUAL PARAMETERS — use annual columns only
+    # ============================================================
+    _section(ws, r, "Annual Parameters (Non-Quarterly)"); r += 1
+
+    R["asp_da"] = _a_annual(
+        "D&A ($M absolute)",
+        [7847, 9951, 10757],
+        [12500, 13200, 13800],
+        [12000, 12500, 12800],
+        [13000, 14000, 15000],
+        "#,##0",
+        "Q1 annualised ~$12.5B; CIP->in-service driving growth."
+    )
+
+    R["asp_sbc"] = _a_annual(
+        "SBC ($M absolute)",
+        [3229, 3410, 2434],
+        [2500, 2500, 2500],
+        [2500, 2500, 2500],
+        [2500, 2500, 2500],
+        "#,##0",
+        "Q1 2026 annualised ~$2.5B. Scenario-independent."
+    )
+
+    R["asp_restruct"] = _a_annual(
+        "Restructuring & Other Charges ($M)",
+        [-62, 6970, 2191],
+        [500, 500, 500],
+        [500, 500, 500],
+        [500, 500, 500],
+        "#,##0",
+        "Winding down; plans substantially complete."
+    )
+
+    # CapEx
+    R["asp_capex"] = _a_annual(
+        "Capital Expenditure ($M Gross)",
+        [25750, 25122, 17672],
+        [17700, 19500, 21000],
+        [17500, 22000, 25000],
+        [18000, 17000, 16000],
+        "#,##0",
+        "FY2026E flat YoY per mgmt guidance; tool-heavy."
+    )
+
+    # Working Capital
+    R["asp_ar_days"] = _a_annual(
+        "AR Days",
+        [22.9, 23.9, 26.5],
+        [25, 25, 25],
+        [25, 25, 25],
+        [25, 25, 25],
+        "#,##0.0",
+        "Historical range 22-27 days."
+    )
+
+    R["asp_ap_days"] = _a_annual(
+        "AP Days",
+        [96.3, 128.2, 104.6],
+        [100, 100, 100],
+        [100, 100, 100],
+        [100, 100, 100],
+        "#,##0.0",
+        "Normalised from FY2024 peak (vendor terms)."
+    )
+
+    R["asp_inv_days"] = _a_annual(
+        "Inventory Days",
+        [124.9, 124.5, 123.0],
+        [125, 125, 125],
+        [125, 125, 125],
+        [125, 125, 125],
+        "#,##0.0",
+        "Remarkably stable at ~124 days."
+    )
+
+    R["asp_accrued_comp"] = _a_annual(
+        "Accrued Comp % of Revenue",
+        [0.067, 0.063, 0.076],
+        [0.07, 0.07, 0.07],
+        [0.07, 0.07, 0.07],
+        [0.07, 0.07, 0.07],
+        "0.0%",
+        "Midpoint of historical range."
+    )
+
+    R["asp_other_ca"] = _a_annual(
+        "Other CA % of Revenue",
+        [None, None, None],
+        [0.15, 0.15, 0.15],
+        [0.15, 0.15, 0.15],
+        [0.15, 0.15, 0.15],
+        "0.0%",
+        "Includes ~$7.5B refundable tax credits."
+    )
+
+    R["asp_other_cl"] = _a_annual(
+        "Other CL % of Revenue",
+        [None, None, None],
+        [0.25, 0.25, 0.25],
+        [0.25, 0.25, 0.25],
+        [0.25, 0.25, 0.25],
+        "0.0%",
+        "Stable relationship."
+    )
+
+    R["asp_tax_payable"] = _a_annual(
+        "Income Tax Payable % of Revenue",
+        [None, None, None],
+        [0.02, 0.02, 0.02],
+        [0.02, 0.02, 0.02],
+        [0.02, 0.02, 0.02],
+        "0.0%",
+        "Normalised level."
+    )
+
+    # Financing
+    R["asp_debt"] = _a_annual(
+        "Total Debt ($M)",
+        [49266, 50011, 46585],
+        [49500, 47200, 46000],
+        [47000, 43000, 39000],
+        [52000, 54000, 55000],
+        "#,##0",
+        "FY2026E: +$6.5B Fab34 loan -$2.5B maturities."
+    )
+
+    R["asp_shares"] = _a_annual(
+        "Basic Shares (M)",
+        [4228, 4330, 4994],
+        [5100, 5180, 5250],
+        [5080, 5120, 5150],
+        [5200, 5400, 5600],
+        "#,##0",
+        "Q1 5,023M + ESPP/RSU + Escrowed Share releases."
+    )
+
+    R["asp_dps"] = _a_annual(
+        "DPS ($/share)",
+        [0.74, 0.38, 0.00],
+        [0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00],
+        "0.00",
+        "Dividends suspended; no reinstatement expected."
+    )
+
+    R["asp_net_eq_iss"] = _a_annual(
+        "Net Equity Issuance ($M)",
+        [None, None, None],
+        [300, 300, 300],
+        [300, 300, 300],
+        [300, 300, 300],
+        "#,##0",
+        "ESPP proceeds net of RSU withholdings."
+    )
+
+    # Tax & Non-Operating
+    R["asp_etr"] = _a_annual(
+        "Effective Tax Rate",
+        [-1.198, -0.716, 0.983],
+        [0.12, 0.13, 0.13],
+        [0.11, 0.12, 0.12],
+        [0.15, 0.15, 0.15],
+        "0.0%",
+        "Anchored to Q2 2026 guided 11%. FY2026E/FY2027E/FY2028E."
+    )
+
+    R["asp_interest"] = _a_annual(
+        "Interest & Other, Net ($M)",
+        [629, 226, 3257],
+        [-800, -600, -400],
+        [-500, -300, -100],
+        [-1200, -1200, -1000],
+        "#,##0",
+        "Net interest on ~$50B debt (~5% coupon)."
+    )
+
+    R["asp_nci"] = _a_annual(
+        "Non-Controlling Interests ($M)",
+        [293, 293, 293],
+        [750, 1100, 1100],
+        [750, 1100, 1100],
+        [750, 1100, 1100],
+        "#,##0",
+        "Per mgmt: ~$250M/q Q2-Q4 FY2026E; Ireland SCIP NCI eliminated Apr 2026."
+    )
+
+    # Corporate
+    R["asp_corp_unalloc"] = _a_annual(
+        "Corporate Unallocated ($M)",
+        [-5199, -11177, -5518],
+        [-5000, -4500, -4000],
+        [-5000, -4500, -4000],
+        [-5000, -4500, -4000],
+        "#,##0",
+        "Declining restructuring + SBC reallocation."
+    )
+
+    R["asp_inter_elim"] = _a_annual(
+        "Intersegment Eliminations ($M)",
+        [-205, -161, 619],
+        [-200, -200, -200],
+        [-200, -200, -200],
+        [-200, -200, -200],
+        "#,##0",
+        "Residual inter-segment elim."
+    )
+
+    # ---- Column widths ----
+    ws.column_dimensions['A'].width = 44
+    for c in range(2, GD_NCOL + 1):
+        cl = CL(c)
+        if c in [17, 33, 34]:
+            ws.column_dimensions[cl].width = 2
+        elif c in [6, 11, 16, 22, 27, 32]:
+            ws.column_dimensions[cl].width = 15
+        elif c == GD_NCOL:
+            ws.column_dimensions[cl].width = 55
+        else:
+            ws.column_dimensions[cl].width = 12
 
     # Legend & Sources
     lr = _add_legend(ws, r + 2)
     _add_sources(ws, lr + 1)
     ws.sheet_properties.tabColor = "1F4E79"
-
     return r
 
 
-# ============================================================
-# TAB 4: GROWTH_DRIVERS (Bottom-Up Revenue Decomposition)
-# ============================================================
-
 def build_growth_drivers(wb, R):
-    """Build growth drivers tab: decompose each segment's revenue into key drivers.
-    CCG: Revenue = PC TAM x Intel Share x ASP (bottom-up)"""
+    """Build growth drivers tab with FULL quarterly layout for all 6 years.
+    Historical (2023-2025): quarterly actuals where available, annual/4 otherwise.
+    Forecast (2026-2028): quarterly = Assumptions annual / 4 (sum-type) or = annual (avg-type).
+    Annual columns = SUM(Q1:Q4) for dollars, = AVERAGE(Q1:Q4) for percentages.
+    Forecast annual columns (22,27,32) link to Segment_PL."""
     ws = wb["Growth_Drivers"]
-    _title_row(ws, 1, "Intel (INTC) - Revenue Growth Drivers")
-    _unit_row(ws, 2)
-    _yr_header_no_scenario(ws, 3)
-    _label(ws, 4, "USD Million / M Units / $ per Unit")
-    _note(ws, 4, "Bottom-up revenue decomposition. Data sources cited inline.")
+    _title_row(ws, 1, "Intel (INTC) - Revenue Growth Drivers (Quarterly All Years)")
+    _unit_row(ws, 2, "USD Million / M Units / $ per Unit (All 6 years quarterly: Q1-Q4 + FY rollup)")
+    _qheader(ws, 3)
+    _label(ws, 4, "Bottom-up revenue decomposition. Hist: quarterly from 10-Q/estimates. Fcst: quarterly from Assumptions/4, annual=SUM.")
+    _note(ws, 4, "Annual columns (F,K,P,V,AA,AF) link to Segment_PL for forecast years. Quarterly splits equal-weighted unless noted.")
 
     r = 5
 
+    # Helper: write a sum-type driver row (annual value split equally across quarters)
+    def _gd_sum_row(label, hist_ann, asp_suffix, fmt_val, note_text, gd_key):
+        nonlocal r
+        _label(ws, r, label)
+        # Historical years: annual/4 per quarter, annual hardcoded
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+            qv = hist_ann[year - 2023] / 4.0 if hist_ann[year - 2023] is not None else None
+            for qc in qcols:
+                if qv is not None:
+                    _hval(ws, r, qc, qv, fmt_val)
+                else:
+                    ws.cell(row=r, column=qc).border = BD
+            if hist_ann[year - 2023] is not None:
+                _hval(ws, r, ann_col, hist_ann[year - 2023], fmt_val)
+            else:
+                ws.cell(row=r, column=ann_col).border = BD
+        # Forecast years: direct link to quarterly Assumptions Selected row
+        sel_row = R[asp_suffix]
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+            for qc in qcols:
+                _fval(ws, r, qc, f"=Assumptions!{CL(qc)}{sel_row}", fmt_val)
+            _fval(ws, r, ann_col, f"=SUM({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", fmt_val)
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, note_text)
+        R[gd_key] = r; r += 1
+
+    # Helper: write an avg-type driver row
+    def _gd_avg_row(label, hist_ann, asp_suffix, note_text, gd_key):
+        nonlocal r
+        _label(ws, r, label)
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+            qv = hist_ann[year - 2023]
+            for qc in qcols:
+                if qv is not None:
+                    _hval(ws, r, qc, qv, "0.0%")
+                else:
+                    ws.cell(row=r, column=qc).border = BD
+            if qv is not None:
+                _hval(ws, r, ann_col, qv, "0.0%")
+            else:
+                ws.cell(row=r, column=ann_col).border = BD
+        sel_row = R[asp_suffix]
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+            for qc in qcols:
+                _fval(ws, r, qc, f"=Assumptions!{CL(qc)}{sel_row}", "0.0%")
+            _fval(ws, r, ann_col, f"=AVERAGE({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", "0.0%")
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, note_text)
+        R[gd_key] = r; r += 1
+
+    # Helper: write an avg-type driver row with custom fmt (for ASP $)
+    def _gd_avg_fmt_row(label, hist_ann, asp_suffix, fmt_val, note_text, gd_key):
+        nonlocal r
+        _label(ws, r, label)
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+            qv = hist_ann[year - 2023]
+            for qc in qcols:
+                if qv is not None:
+                    _hval(ws, r, qc, qv, fmt_val)
+                else:
+                    ws.cell(row=r, column=qc).border = BD
+            if qv is not None:
+                _hval(ws, r, ann_col, qv, fmt_val)
+            else:
+                ws.cell(row=r, column=ann_col).border = BD
+        sel_row = R[asp_suffix]
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+            for qc in qcols:
+                _fval(ws, r, qc, f"=Assumptions!{CL(qc)}{sel_row}", fmt_val)
+            _fval(ws, r, ann_col, f"=AVERAGE({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", fmt_val)
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, note_text)
+        R[gd_key] = r; r += 1
+
+    # Helper: formula row across all 6 years (quarterly + annual = SUM)
+    def _gd_formula_row(label, formula_fn, fmt_val, note_text, gd_key):
+        """formula_fn(col_letter, row) -> formula string for that column"""
+        nonlocal r
+        _label(ws, r, label)
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+            for qc in qcols:
+                _fval(ws, r, qc, formula_fn(CL(qc), r), fmt_val)
+            _fval(ws, r, ann_col, f"=SUM({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", fmt_val)
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, note_text)
+        R[gd_key] = r; r += 1
+
+    # Helper: formula row where quarterly uses same formula and annual = SUM (no col-dependence)
+    def _gd_formula_row_simple(label, formula_str, fmt_val, note_text, gd_key):
+        nonlocal r
+        _label(ws, r, label)
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+            for qc in qcols:
+                _fval(ws, r, qc, f"={CL(qc)}{formula_str}", fmt_val)
+            _fval(ws, r, ann_col, f"=SUM({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", fmt_val)
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, note_text)
+        R[gd_key] = r; r += 1
+
+    # Helper: blank quarterly cells with border only (for forecast-only or unused cells)
+    def _gd_blank_q(ws, r, cols):
+        for c in cols:
+            ws.cell(row=r, column=c).border = BD
+
     # ============================================================
-    # CCG — Bottom-Up: Revenue = PC TAM × Intel Share × ASP
+    # CCG — Bottom-Up: Revenue = PC TAM x Intel Share x ASP
     # ============================================================
     _section(ws, r, "CCG: Client Computing Group — Bottom-Up"); r += 1
-    _label(ws, r, "Method: Revenue = PC TAM (M units) × Intel Unit Share (%) × Blended ASP ($)")
-    _note(ws, r, "TAM source: Gartner/IDC (2023=241.8M, 2024=245.4M). Share: Mercury Research est. ASP: derived from rev/(TAM×share).")
+    _label(ws, r, "Method: Revenue = PC TAM (M units) x Intel Unit Share (%) x Blended ASP ($)")
+    _note(ws, r, "TAM source: Gartner/IDC. Share: Mercury Research. ASP derived. Q1'25 CCG=$7,629M, Q1'26 CCG=$7,727M actual.")
     r += 1
 
-    # PC TAM
-    _label(ws, r, "PC TAM (M units)")
-    hist_tam = [241.8, 245.4, 258.6]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_tam[ci], "#,##0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_pc_tam_{fc_year}']}", "#,##0.0")
-    _note(ws, r, "Source: Gartner/IDC. 2025 est. based on Canalys ~259M full-year")
-    R["gd_ccg_tam"] = r; r += 1
+    # PC TAM (sum-type)
+    _gd_sum_row("PC TAM (M units)", [241.8, 245.4, 258.6], "asp_pc_tam", "#,##0.0",
+                "Annual TAM split equally across 4 quarters. FY2025 ~259M (Canalys est.)", "gd_ccg_tam")
 
-    # Intel Unit Share
-    _label(ws, r, "Intel PC Unit Share (%)")
-    hist_share = [0.710, 0.715, 0.720]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_share[ci], "0.0%")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_intel_share_{fc_year}']}", "0.0%")
-    _note(ws, r, "Source: Mercury Research x86 PC CPU share. Q4'24 est. ~72%")
-    R["gd_ccg_share"] = r; r += 1
+    # Intel Unit Share (avg-type)
+    _gd_avg_row("Intel PC Unit Share (%)", [0.710, 0.715, 0.720], "asp_intel_share",
+                "Quarterly share = annual assumption (stable intra-year). Mercury Research est. ~72%", "gd_ccg_share")
 
-    # Intel Implied Units = TAM × Share
-    _label(ws, r, "  Intel Implied Units (M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_ccg_tam']}*{CL(col)}{R['gd_ccg_share']}", "#,##0.0")
-    _note(ws, r, "= PC TAM × Intel Share. Implied unit shipments")
-    R["gd_ccg_units"] = r; r += 1
+    # Implied Units = TAM x Share
+    tam_r = R["gd_ccg_tam"]; share_r = R["gd_ccg_share"]
+    _gd_formula_row("  Intel Implied Units (M)",
+                    lambda cl, rw: f"={cl}{tam_r}*{cl}{share_r}", "#,##0.0",
+                    "= PC TAM x Intel Share. Implied unit shipments per quarter", "gd_ccg_units")
 
-    # CCG Blended ASP
-    _label(ws, r, "Intel CCG Blended ASP ($)")
-    hist_asp = [188, 190, 173]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_asp[ci], "0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_ccg_asp_{fc_year}']}", "0.0")
-    _note(ws, r, "Historical: derived as Reported Revenue / Implied Units. Q1 2026 ASP +16% YoY")
-    R["gd_ccg_asp"] = r; r += 1
+    # CCG Blended ASP (avg-type with custom fmt)
+    _gd_avg_fmt_row("Intel CCG Blended ASP ($)", [188, 190, 173], "asp_ccg_asp", "0.0",
+                    "Quarterly ASP = annual assumption. Q1 2026 ASP +16% YoY. Historical derived from Rev/(TAMxShare)", "gd_ccg_asp")
 
-    # Implied Revenue = Units × ASP
-    _label(ws, r, "  Implied CCG Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_ccg_units']}*{CL(col)}{R['gd_ccg_asp']}", "#,##0")
-    _note(ws, r, "= Units × ASP. Bottom-up revenue estimate")
-    R["gd_ccg_implied_rev"] = r; r += 1
+    # Implied CCG Revenue = Units x ASP
+    units_r = R["gd_ccg_units"]; asp_r = R["gd_ccg_asp"]
+    _gd_formula_row("  Implied CCG Revenue ($M)",
+                    lambda cl, rw: f"={cl}{units_r}*{cl}{asp_r}", "#,##0",
+                    "= Units x ASP. Bottom-up quarterly revenue. Annual = SUM(Q1:Q4) -> links to Segment_PL", "gd_ccg_implied_rev")
 
-    # Reported CCG Revenue (historical: Segment_Revenue; forecast: mirrors Implied)
+    # Reported CCG Revenue (historical: Segment_PL; forecast: mirrors Implied annual)
+    # GD annual cols (6,11,16) map to Segment_PL annual HIST_COLS (2,3,4)
+    gd_ann_to_segpl = {6: 6, 11: 11, 16: 16}
     _label(ws, r, "  Reported CCG Revenue ($M)")
-    for col in HIST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_ccg']}", "#,##0")
-    for fc in FCST_COLS:
-        _lval(ws, r, fc, f"={CL(fc)}{R['gd_ccg_implied_rev']}", "#,##0")
-    _note(ws, r, "Historical: links to Segment_Revenue (10-K). Forecast: = Implied (Segment_Revenue pulls from Growth_Drivers)")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+        segpl_rev_r = R["segpl_ccg_rev"]
+        segpl_col = gd_ann_to_segpl[ann_col]
+        qdata = GD_QREV["ccg"].get(year, {})
+        for qi, qc in enumerate(qcols):
+            qnum = qi + 1
+            if qnum in qdata:
+                _hval(ws, r, qc, qdata[qnum], "#,##0")
+            else:
+                _fval(ws, r, qc, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}/4", "#,##0")
+        _lval(ws, r, ann_col, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}", "#,##0")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+        for qc in qcols:
+            _fval(ws, r, qc, f"={CL(qc)}{R['gd_ccg_implied_rev']}", "#,##0")
+        _lval(ws, r, ann_col, f"={CL(ann_col)}{R['gd_ccg_implied_rev']}", "#,##0")
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Historical: links to Segment_PL (10-K) split quarterly; Q1'25, Q4'25, Q1'26 have actuals. Forecast: = Implied bottom-up")
     R["gd_ccg_reported_rev"] = r; r += 1
 
-    # Reconciliation = Implied - Reported
-    _section(ws, r, "  Reconciliation: Implied − Reported ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col,
-              f"={CL(col)}{R['gd_ccg_implied_rev']}-{CL(col)}{R['gd_ccg_reported_rev']}", "#,##0")
-    _note(ws, r, "Should be near-zero for historical (within 0.1%). Forecast: divergence flags assumption inconsistency")
+    # Reconciliation rows (annual cols only)
+    _section(ws, r, "  Reconciliation: Implied - Reported ($M, annual)")
+    impl_r = R["gd_ccg_implied_rev"]; rep_r = R["gd_ccg_reported_rev"]
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _fval(ws, r, ann_col, f"={CL(ann_col)}{impl_r}-{CL(ann_col)}{rep_r}", "#,##0")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Should be near-zero for historical (<0.1%). Forecast: flags assumption inconsistency")
     R["gd_ccg_recon"] = r; r += 1
 
-    # Reconciliation %
     _label(ws, r, "  Reconcil. as % of Reported")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col,
-             f"={CL(col)}{R['gd_ccg_recon']}/{CL(col)}{R['gd_ccg_reported_rev']}")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['gd_ccg_recon']}/{CL(ann_col)}{rep_r}")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Green if <1%"); r += 2
 
     # ============================================================
-    # DCAI — Bottom-Up: Rev = Server TAM × Intel DC Share × ASP + AI/ASIC Rev
+    # DCAI — Bottom-Up: Rev = Server TAM x Intel DC Share x ASP + AI/ASIC Rev
     # ============================================================
     _section(ws, r, "DCAI: Data Center & AI — Bottom-Up"); r += 1
-    _label(ws, r, "Method: Revenue = Server TAM (M) × Intel DC Share (%) × ASP ($) + AI/ASIC ($M)")
-    _note(ws, r, "TAM: IDC. Share: Mercury Research. AI/ASIC: Gaudi+custom ASICs+NICs/IPUs. Q1 2026 ASIC run rate >$1B.")
+    _label(ws, r, "Method: Revenue = Server TAM (M) x Intel DC Share (%) x ASP ($) + AI/ASIC ($M)")
+    _note(ws, r, "TAM: IDC. Share: Mercury Research. AI/ASIC: Gaudi+custom ASICs+NICs/IPUs. Q1'25 DCAI=$4,126M, Q1'26 DCAI=$5,052M actual.")
     r += 1
 
     # Server TAM
-    _label(ws, r, "Server TAM (M units)")
-    hist_svr_tam = [11.5, 12.0, 13.5]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_svr_tam[ci], "#,##0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_svr_tam_{fc_year}']}", "#,##0.0")
-    _note(ws, r, "Source: IDC. 2023=11.5M, 2024=12.0M, 2025=13.5M. AI buildout driving unit growth")
-    R["gd_dcai_tam"] = r; r += 1
+    _gd_sum_row("Server TAM (M units)", [11.5, 12.0, 13.5], "asp_svr_tam", "#,##0.0",
+                "Annual Server TAM split equally across 4 quarters. IDC: 2025 ~13.5M", "gd_dcai_tam")
 
-    # Intel DC Unit Share
-    _label(ws, r, "Intel DC Server Unit Share (%)")
-    hist_dc_share = [0.775, 0.760, 0.730]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_dc_share[ci], "0.0%")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_intel_dc_share_{fc_year}']}", "0.0%")
-    _note(ws, r, "Source: Mercury Research x86 server CPU share. Q4 2024 ~72%. Granite Rapids competitive vs Turin")
-    R["gd_dcai_share"] = r; r += 1
+    # Intel DC Share
+    _gd_avg_row("Intel DC Server Unit Share (%)", [0.775, 0.760, 0.730], "asp_intel_dc_share",
+                "Quarterly share = annual assumption. Granite Rapids competitive vs Turin. ~72% Q4'24", "gd_dcai_share")
 
-    # Intel Implied DC Units = TAM × Share
-    _label(ws, r, "  Intel Implied DC Units (M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_dcai_tam']}*{CL(col)}{R['gd_dcai_share']}", "#,##0.0")
-    _note(ws, r, "= Server TAM × Intel DC Share. Implied unit shipments")
-    R["gd_dcai_units"] = r; r += 1
+    # Implied DC Units
+    dc_tam_r = R["gd_dcai_tam"]; dc_share_r = R["gd_dcai_share"]
+    _gd_formula_row("  Intel Implied DC Units (M)",
+                    lambda cl, rw: f"={cl}{dc_tam_r}*{cl}{dc_share_r}", "#,##0.0",
+                    "= Server TAM x Intel DC Share. Implied quarterly unit shipments", "gd_dcai_units")
 
-    # Server Blended ASP
-    _label(ws, r, "Intel Server Blended ASP ($)")
-    hist_dc_asp = [1772, 1712, 1632]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_dc_asp[ci], "#,##0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_dc_asp_{fc_year}']}", "#,##0")
-    _note(ws, r, "Historical: derived as (DCAI Rev − AI/ASIC) / (TAM × Share). Q1 2026 ASP +27% YoY")
-    R["gd_dcai_asp"] = r; r += 1
+    # Server ASP
+    _gd_avg_fmt_row("Intel Server Blended ASP ($)", [1772, 1712, 1632], "asp_dc_asp", "#,##0",
+                    "Quarterly ASP = annual assumption. Q1 2026 ASP +27% YoY. Historical: (Rev-AI/ASIC)/(TAMxShare)", "gd_dcai_asp")
 
-    # Implied CPU Revenue = Units × ASP
-    _label(ws, r, "  Implied CPU Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_dcai_units']}*{CL(col)}{R['gd_dcai_asp']}", "#,##0")
-    _note(ws, r, "= DC Units × Server ASP. Core x86 server CPU revenue")
-    R["gd_dcai_cpu_rev"] = r; r += 1
+    # Implied CPU Revenue
+    dc_units_r = R["gd_dcai_units"]; dc_asp_r = R["gd_dcai_asp"]
+    _gd_formula_row("  Implied CPU Revenue ($M)",
+                    lambda cl, rw: f"={cl}{dc_units_r}*{cl}{dc_asp_r}", "#,##0",
+                    "= DC Units x Server ASP. Core x86 server CPU revenue", "gd_dcai_cpu_rev")
 
-    # AI/ASIC & Other Revenue
-    _label(ws, r, "AI/ASIC & Other Revenue ($M)")
-    hist_ai_asic = [200, 500, 800]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_ai_asic[ci], "#,##0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_ai_asic_{fc_year}']}", "#,##0")
-    _note(ws, r, "Gaudi AI accelerators + custom ASICs + NICs/IPUs. FY2025 ~$800M. Q1 2026 ASIC run rate >$1B")
-    R["gd_dcai_ai_asic"] = r; r += 1
+    # AI/ASIC Revenue
+    _gd_sum_row("AI/ASIC & Other Revenue ($M)", [200, 500, 800], "asp_ai_asic", "#,##0",
+                "Gaudi AI accelerators + custom ASICs + NICs/IPUs. FY2025 ~$800M. Q1'26 ASIC run rate >$1B", "gd_dcai_ai_asic")
 
-    # Implied DCAI Revenue = CPU Rev + AI/ASIC Rev
-    _label(ws, r, "  Implied DCAI Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_dcai_cpu_rev']}+{CL(col)}{R['gd_dcai_ai_asic']}", "#,##0")
-    _note(ws, r, "= CPU Revenue + AI/ASIC Revenue. Bottom-up DCAI estimate")
-    R["gd_dcai_implied_rev"] = r; r += 1
+    # Implied DCAI Revenue = CPU + AI/ASIC
+    cpu_r = R["gd_dcai_cpu_rev"]; ai_r = R["gd_dcai_ai_asic"]
+    _gd_formula_row("  Implied DCAI Revenue ($M)",
+                    lambda cl, rw: f"={cl}{cpu_r}+{cl}{ai_r}", "#,##0",
+                    "= CPU Revenue + AI/ASIC Revenue. Bottom-up DCAI estimate. Annual = SUM(Q1:Q4)", "gd_dcai_implied_rev")
 
-    # Reported DCAI Revenue (historical: Segment_Revenue; forecast: mirrors Implied)
+    # Reported DCAI Revenue
     _label(ws, r, "  Reported DCAI Revenue ($M)")
-    for col in HIST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_dcai']}", "#,##0")
-    for fc in FCST_COLS:
-        _lval(ws, r, fc, f"={CL(fc)}{R['gd_dcai_implied_rev']}", "#,##0")
-    _note(ws, r, "Historical: links to Segment_Revenue (10-K). Forecast: = Implied (Segment_Revenue pulls from Growth_Drivers)")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+        segpl_rev_r = R["segpl_dcai_rev"]
+        segpl_col = gd_ann_to_segpl[ann_col]
+        qdata = GD_QREV["dcai"].get(year, {})
+        for qi, qc in enumerate(qcols):
+            qnum = qi + 1
+            if qnum in qdata:
+                _hval(ws, r, qc, qdata[qnum], "#,##0")
+            else:
+                _fval(ws, r, qc, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}/4", "#,##0")
+        _lval(ws, r, ann_col, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}", "#,##0")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+        for qc in qcols:
+            _fval(ws, r, qc, f"={CL(qc)}{R['gd_dcai_implied_rev']}", "#,##0")
+        _lval(ws, r, ann_col, f"={CL(ann_col)}{R['gd_dcai_implied_rev']}", "#,##0")
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Historical: links to Segment_PL split quarterly. Forecast annual: = Implied")
     R["gd_dcai_reported_rev"] = r; r += 1
 
-    # Reconciliation = Implied - Reported
-    _section(ws, r, "  Reconciliation: Implied − Reported ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col,
-              f"={CL(col)}{R['gd_dcai_implied_rev']}-{CL(col)}{R['gd_dcai_reported_rev']}", "#,##0")
+    # Reconciliation
+    _section(ws, r, "  Reconciliation: Implied - Reported ($M, annual)")
+    dcai_impl_r = R["gd_dcai_implied_rev"]; dcai_rep_r = R["gd_dcai_reported_rev"]
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _fval(ws, r, ann_col, f"={CL(ann_col)}{dcai_impl_r}-{CL(ann_col)}{dcai_rep_r}", "#,##0")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Historical should be near-zero (<0.5%). Forecast: flags driver vs growth-rate assumption divergence")
     R["gd_dcai_recon"] = r; r += 1
 
-    # Reconciliation %
     _label(ws, r, "  Reconcil. as % of Reported")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col,
-             f"={CL(col)}{R['gd_dcai_recon']}/{CL(col)}{R['gd_dcai_reported_rev']}")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['gd_dcai_recon']}/{CL(ann_col)}{dcai_rep_r}")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Green if <1%"); r += 2
 
     # ============================================================
-    # Intel Foundry — Bottom-Up: Internal = Total Chip Vol × Rev/Chip + External
+    # Intel Foundry — Bottom-Up
     # ============================================================
     _section(ws, r, "Intel Foundry — Bottom-Up"); r += 1
-    _label(ws, r, "Method: Revenue = Total Intel Chip Vol (M) × Internal Rev/Chip ($) + External Foundry ($M)")
-    _note(ws, r, "~99% internal wafer sales to Intel Products. Chip vol = CCG + DCAI units. Rev/Chip = internal transfer price.")
+    _label(ws, r, "Method: Revenue = Total Intel Chip Vol (M) x Internal Rev/Chip ($) + External Foundry ($M)")
+    _note(ws, r, "~99% internal wafer sales to Intel Products. Chip vol = CCG + DCAI units.")
     r += 1
 
     # Total Intel Chip Volume = CCG Units + DCAI Units
-    _label(ws, r, "Total Intel Chip Volume (M units)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_ccg_units']}+{CL(col)}{R['gd_dcai_units']}", "#,##0.0")
-    _note(ws, r, "= CCG Implied Units + DCAI Implied Units. Links to segment drivers above")
-    R["gd_foundry_vol"] = r; r += 1
+    _gd_formula_row("Total Intel Chip Volume (M units)",
+                    lambda cl, rw: f"={cl}{R['gd_ccg_units']}+{cl}{R['gd_dcai_units']}", "#,##0.0",
+                    "= CCG Implied Units + DCAI Implied Units. Links to segment drivers above", "gd_foundry_vol")
 
-    # Internal Foundry Rev per Chip
-    _label(ws, r, "Internal Foundry Rev per Chip ($)")
-    hist_rev_per_chip = [102.2, 93.5, 90.1]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_rev_per_chip[ci], "0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_foundry_rev_per_chip_{fc_year}']}", "0.0")
-    _note(ws, r, "Historical: derived as Internal Foundry Rev / Total Intel Units. Declining trend as older nodes depreciate")
-    R["gd_foundry_rev_per_chip"] = r; r += 1
+    # Internal Rev per Chip
+    _gd_avg_fmt_row("Internal Foundry Rev per Chip ($)", [102.2, 93.5, 90.1], "asp_foundry_rev_per_chip", "0.0",
+                    "Quarterly Rev/Chip = annual assumption. Historical derived from Internal Foundry Rev / Total Units", "gd_foundry_rev_per_chip")
 
-    # Internal Foundry Revenue = Vol × Rev/Chip
-    _label(ws, r, "  Internal Foundry Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_foundry_vol']}*{CL(col)}{R['gd_foundry_rev_per_chip']}", "#,##0")
-    _note(ws, r, "= Total Intel Chip Vol × Internal Rev/Chip. Wafer sales to Intel CCG and DCAI divisions")
-    R["gd_foundry_internal_rev"] = r; r += 1
+    # Internal Foundry Revenue = Vol x Rev/Chip
+    vol_r = R["gd_foundry_vol"]; rpc_r = R["gd_foundry_rev_per_chip"]
+    _gd_formula_row("  Internal Foundry Revenue ($M)",
+                    lambda cl, rw: f"={cl}{vol_r}*{cl}{rpc_r}", "#,##0",
+                    "= Total Chip Vol x Internal Rev/Chip. Wafer sales to Intel CCG/DCAI divisions", "gd_foundry_internal_rev")
 
     # External Foundry Revenue
-    _label(ws, r, "External Foundry Revenue ($M)")
-    hist_ext_foundry = [50, 60, 150]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_ext_foundry[ci], "#,##0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_ext_foundry_{fc_year}']}", "#,##0")
-    _note(ws, r, "3rd-party wafer customers. FY2025 ~$150M. Growing as 18A/14A external PDK ramps")
-    R["gd_foundry_ext_rev"] = r; r += 1
+    _gd_sum_row("External Foundry Revenue ($M)", [50, 60, 150], "asp_ext_foundry", "#,##0",
+                "3rd-party wafer customers. FY2025 ~$150M. Growing as 18A/14A external PDK ramps", "gd_foundry_ext_rev")
 
     # Implied Total Foundry Revenue = Internal + External
-    _label(ws, r, "  Implied Total Foundry Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_foundry_internal_rev']}+{CL(col)}{R['gd_foundry_ext_rev']}", "#,##0")
-    _note(ws, r, "= Internal Foundry Rev + External Foundry Rev")
-    R["gd_foundry_implied_rev"] = r; r += 1
+    int_r = R["gd_foundry_internal_rev"]; ext_r = R["gd_foundry_ext_rev"]
+    _gd_formula_row("  Implied Total Foundry Revenue ($M)",
+                    lambda cl, rw: f"={cl}{int_r}+{cl}{ext_r}", "#,##0",
+                    "= Internal Foundry Rev + External Foundry Rev", "gd_foundry_implied_rev")
 
-    # Reported Foundry Revenue (historical: Segment_Revenue; forecast: mirrors Implied)
+    # Reported Foundry Revenue
     _label(ws, r, "  Reported Foundry Revenue ($M)")
-    for col in HIST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_foundry']}", "#,##0")
-    for fc in FCST_COLS:
-        _lval(ws, r, fc, f"={CL(fc)}{R['gd_foundry_implied_rev']}", "#,##0")
-    _note(ws, r, "Historical: links to Segment_Revenue (10-K). Forecast: = Implied (Segment_Revenue pulls from Growth_Drivers)")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+        segpl_rev_r = R["segpl_foundry_rev"]
+        segpl_col = gd_ann_to_segpl[ann_col]
+        qdata = GD_QREV["foundry"].get(year, {})
+        for qi, qc in enumerate(qcols):
+            qnum = qi + 1
+            if qnum in qdata:
+                _hval(ws, r, qc, qdata[qnum], "#,##0")
+            else:
+                _fval(ws, r, qc, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}/4", "#,##0")
+        _lval(ws, r, ann_col, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}", "#,##0")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+        for qc in qcols:
+            _fval(ws, r, qc, f"={CL(qc)}{R['gd_foundry_implied_rev']}", "#,##0")
+        _lval(ws, r, ann_col, f"={CL(ann_col)}{R['gd_foundry_implied_rev']}", "#,##0")
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Historical: links to Segment_PL split quarterly. Forecast annual: = Implied")
     R["gd_foundry_reported_rev"] = r; r += 1
 
     # Reconciliation
-    _section(ws, r, "  Reconciliation: Implied − Reported ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col,
-              f"={CL(col)}{R['gd_foundry_implied_rev']}-{CL(col)}{R['gd_foundry_reported_rev']}", "#,##0")
+    _section(ws, r, "  Reconciliation: Implied - Reported ($M, annual)")
+    f_impl_r = R["gd_foundry_implied_rev"]; f_rep_r = R["gd_foundry_reported_rev"]
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _fval(ws, r, ann_col, f"={CL(ann_col)}{f_impl_r}-{CL(ann_col)}{f_rep_r}", "#,##0")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Historical should be near-zero (<0.1%). Forecast: flags driver vs growth-rate assumption divergence")
     R["gd_foundry_recon"] = r; r += 1
 
-    # Reconciliation %
     _label(ws, r, "  Reconcil. as % of Reported")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col,
-             f"={CL(col)}{R['gd_foundry_recon']}/{CL(col)}{R['gd_foundry_reported_rev']}")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['gd_foundry_recon']}/{CL(ann_col)}{f_rep_r}")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Green if <1%"); r += 2
 
     # ============================================================
-    # All Other — Bottom-Up: Mobileye (LV Prod × Rev/Veh) + IMS/Other
+    # All Other — Bottom-Up: Mobileye + IMS + Legacy
     # ============================================================
     _section(ws, r, "All Other: Mobileye + IMS + Legacy — Bottom-Up"); r += 1
-    _label(ws, r, "Method: Revenue = LV Production (M) × Mobileye Rev/Vehicle ($) + IMS & Other ($M)")
-    _note(ws, r, "All Other = Mobileye (ADAS chips) + IMS (nanofab tools) + legacy. LV Prod source: IHS/S&P Global Mobility.")
+    _label(ws, r, "Method: Revenue = LV Production (M) x Mobileye Rev/Vehicle ($) + IMS & Other ($M)")
+    _note(ws, r, "Mobileye ADAS chips + IMS nanofab tools + legacy. Q1'25 All Other=$943M, Q1'26=$628M actual.")
     r += 1
 
     # Global LV Production
-    _label(ws, r, "Global Light Vehicle Production (M)")
-    hist_lv_prod = [89.0, 88.0, 87.0]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_lv_prod[ci], "#,##0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_lv_prod_{fc_year}']}", "#,##0.0")
-    _note(ws, r, "Source: IHS/S&P Global Mobility. FY2023 89M, FY2024 88M, FY2025 ~87M")
-    R["gd_allother_lv_prod"] = r; r += 1
+    _gd_sum_row("Global Light Vehicle Production (M)", [89.0, 88.0, 87.0], "asp_lv_prod", "#,##0.0",
+                "IHS/S&P Global Mobility. FY2025 ~87M. Equal quarterly allocation", "gd_allother_lv_prod")
 
     # Mobileye Rev per Vehicle
-    _label(ws, r, "Mobileye Rev per Vehicle ($)")
-    hist_mbly_rpv = [23.4, 18.9, 21.8]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_mbly_rpv[ci], "0.0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_mbly_rev_per_veh_{fc_year}']}", "0.0")
-    _note(ws, r, "Historical: FY2023 $23.4 (pre-destock), FY2024 $18.9 (inventory correction), FY2025 $21.8 (recovery). Source: Intel 10-K Mobileye revenue $1.9B FY2025")
-    R["gd_allother_mbly_rpv"] = r; r += 1
+    _gd_avg_fmt_row("Mobileye Rev per Vehicle ($)", [23.4, 18.9, 21.8], "asp_mbly_rev_per_veh", "0.0",
+                    "Quarterly Rev/Veh = annual assumption. FY2025 Mobileye $1.9B / 87M LV = $21.8", "gd_allother_mbly_rpv")
 
-    # Implied Mobileye Revenue = LV Prod × Rev/Vehicle
-    _label(ws, r, "  Implied Mobileye Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_allother_lv_prod']}*{CL(col)}{R['gd_allother_mbly_rpv']}", "#,##0")
-    _note(ws, r, "= Global LV Production × Mobileye Rev/Vehicle. EyeQ + SuperVision/Chauffeur")
-    R["gd_allother_mbly_rev"] = r; r += 1
+    # Implied Mobileye Revenue = LV x RPU
+    lv_r = R["gd_allother_lv_prod"]; rpv_r = R["gd_allother_mbly_rpv"]
+    _gd_formula_row("  Implied Mobileye Revenue ($M)",
+                    lambda cl, rw: f"={cl}{lv_r}*{cl}{rpv_r}", "#,##0",
+                    "= LV Production x Mobileye Rev/Vehicle. EyeQ + SuperVision/Chauffeur", "gd_allother_mbly_rev")
 
     # IMS & Other Revenue
-    _label(ws, r, "IMS & Other Revenue ($M)")
-    hist_ims_other = [3378, 1941, 1663]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_ims_other[ci], "#,##0")
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_ims_other_{fc_year}']}", "#,##0")
-    _note(ws, r, "IMS nanofabrication mask writers + legacy. FY2023-24 include Altera ($1.3B decline YoY FY2024). Altera deconsolidated Sep 2025")
-    R["gd_allother_ims"] = r; r += 1
+    _gd_sum_row("IMS & Other Revenue ($M)", [3378, 1941, 1663], "asp_ims_other", "#,##0",
+                "IMS nanofabrication tools + legacy. FY2023-24 include Altera. Altera deconsolidated Sep 2025", "gd_allother_ims")
 
-    # Implied All Other Revenue = Mobileye + IMS/Other
-    _label(ws, r, "  Implied All Other Revenue ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col, f"={CL(col)}{R['gd_allother_mbly_rev']}+{CL(col)}{R['gd_allother_ims']}", "#,##0")
-    _note(ws, r, "= Mobileye Revenue + IMS & Other Revenue")
-    R["gd_allother_implied_rev"] = r; r += 1
+    # Implied All Other Revenue = Mobileye + IMS
+    mbly_r = R["gd_allother_mbly_rev"]; ims_r = R["gd_allother_ims"]
+    _gd_formula_row("  Implied All Other Revenue ($M)",
+                    lambda cl, rw: f"={cl}{mbly_r}+{cl}{ims_r}", "#,##0",
+                    "= Mobileye Revenue + IMS & Other. Annual = SUM(Q1:Q4)", "gd_allother_implied_rev")
 
-    # Reported All Other Revenue (historical: Segment_Revenue; forecast: mirrors Implied)
+    # Reported All Other Revenue
     _label(ws, r, "  Reported All Other Revenue ($M)")
-    for col in HIST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_allother']}", "#,##0")
-    for fc in FCST_COLS:
-        _lval(ws, r, fc, f"={CL(fc)}{R['gd_allother_implied_rev']}", "#,##0")
-    _note(ws, r, "Historical: links to Segment_Revenue (10-K). Forecast: = Implied (Segment_Revenue pulls from Growth_Drivers)")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+        segpl_rev_r = R["segpl_allother_rev"]
+        segpl_col = gd_ann_to_segpl[ann_col]
+        qdata = GD_QREV["allother"].get(year, {})
+        for qi, qc in enumerate(qcols):
+            qnum = qi + 1
+            if qnum in qdata:
+                _hval(ws, r, qc, qdata[qnum], "#,##0")
+            else:
+                _fval(ws, r, qc, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}/4", "#,##0")
+        _lval(ws, r, ann_col, f"=Segment_PL!{CL(segpl_col)}{segpl_rev_r}", "#,##0")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+        for qc in qcols:
+            _fval(ws, r, qc, f"={CL(qc)}{R['gd_allother_implied_rev']}", "#,##0")
+        _lval(ws, r, ann_col, f"={CL(ann_col)}{R['gd_allother_implied_rev']}", "#,##0")
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Historical: links to Segment_PL split quarterly. Forecast annual: = Implied")
     R["gd_allother_reported_rev"] = r; r += 1
 
     # Reconciliation
-    _section(ws, r, "  Reconciliation: Implied − Reported ($M)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r, col,
-              f"={CL(col)}{R['gd_allother_implied_rev']}-{CL(col)}{R['gd_allother_reported_rev']}", "#,##0")
+    _section(ws, r, "  Reconciliation: Implied - Reported ($M, annual)")
+    ao_impl_r = R["gd_allother_implied_rev"]; ao_rep_r = R["gd_allother_reported_rev"]
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _fval(ws, r, ann_col, f"={CL(ann_col)}{ao_impl_r}-{CL(ann_col)}{ao_rep_r}", "#,##0")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Historical should be near-zero (<1%). Forecast: flags driver vs growth-rate assumption divergence")
     R["gd_allother_recon"] = r; r += 1
 
-    # Reconciliation %
     _label(ws, r, "  Reconcil. as % of Reported")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col,
-             f"={CL(col)}{R['gd_allother_recon']}/{CL(col)}{R['gd_allother_reported_rev']}")
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['gd_allother_recon']}/{CL(ann_col)}{ao_rep_r}")
+    _gd_blank_q(ws, r, [c for y, qc, a, s in GD_ALL_YEARS for c in qc])
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
     _note(ws, r, "Green if <1%"); r += 2
 
     # ============================================================
-    # Driver Sensitivity: FY2026E Revenue Elasticity
+    # Driver Sensitivity Summary (Annual FY2026E-FY2028E)
     # ============================================================
-    _section(ws, r, "Driver Sensitivity: FY2026E Revenue Elasticity"); r += 1
-    _label(ws, r, "Impact of isolated driver changes on FY2026E implied segment revenue (Base case). Updates with scenario.")
-    _note(ws, r, "All elasticities reference FY2026E (col F) driver and revenue values. Switch scenario in Assumptions!B2 to see Bull/Bear sensitivity.")
+    _section(ws, r, "Driver Sensitivity: Revenue Elasticity (Annual Columns)"); r += 1
+    _label(ws, r, "Impact of isolated driver changes on annual implied revenue (Base case). Uses FY2026E annual column (V).")
+    _note(ws, r, "References annual column V (FY2026E). Switch scenario in Assumptions!B2 to update.")
     r += 1
-
-    # Column headers
     _label(ws, r, "Driver")
-    ws.cell(row=r, column=6, value="FY2026E Value").font = Font(bold=True, size=9)
-    ws.cell(row=r, column=6).border = BD
-    ws.cell(row=r, column=7, value="Change").font = Font(bold=True, size=9)
-    ws.cell(row=r, column=7).border = BD
-    ws.cell(row=r, column=8, value="Rev Impact ($M)").font = Font(bold=True, size=9)
-    ws.cell(row=r, column=8).border = BD
-    ws.cell(row=r, column=9, value="Impact %").font = Font(bold=True, size=9)
-    ws.cell(row=r, column=9).border = BD
+    for ci, lbl in enumerate(["FY2026E Value", "Change", "Rev Impact ($M)", "Impact %"], start=22):
+        c = ws.cell(row=r, column=ci, value=lbl)
+        c.font = Font(bold=True, size=9, name="Calibri"); c.border = BD; c.alignment = ALIGN_CENTER
     r += 1
 
-    # ---- CCG Sensitivities ----
-    _label(ws, r, "CCG Drivers", bold=True); r += 1
+    a2026 = GD_ANN_COLS[2026]  # 22
+    s_items = [
+        ("CCG: PC TAM +1%", f"={CL(a2026)}{R['gd_ccg_tam']}", f"={CL(a2026)}{R['gd_ccg_implied_rev']}*0.01",
+         "PC TAM 1:1 elasticity with CCG revenue"),
+        ("CCG: Intel PC Share +1pp", f"={CL(a2026)}{R['gd_ccg_share']}", f"={CL(a2026)}{R['gd_ccg_tam']}*0.01*{CL(a2026)}{R['gd_ccg_asp']}",
+         "Most sensitive CCG driver. 1pp share = TAM x 1% x ASP"),
+        ("CCG: Blended ASP +$1", f"={CL(a2026)}{R['gd_ccg_asp']}", f"={CL(a2026)}{R['gd_ccg_units']}",
+         "$1 ASP change = Units x $1"),
+        ("DCAI: Server TAM +1%", f"={CL(a2026)}{R['gd_dcai_tam']}", f"={CL(a2026)}{R['gd_dcai_cpu_rev']}*0.01",
+         "TAM elasticity applies to CPU revenue only"),
+        ("DCAI: DC Server Share +1pp", f"={CL(a2026)}{R['gd_dcai_share']}", f"={CL(a2026)}{R['gd_dcai_tam']}*0.01*{CL(a2026)}{R['gd_dcai_asp']}",
+         "Most sensitive DCAI driver"),
+        ("DCAI: Server ASP +$1", f"={CL(a2026)}{R['gd_dcai_asp']}", f"={CL(a2026)}{R['gd_dcai_units']}",
+         "$1 ASP change = DC Units x $1"),
+        ("DCAI: AI/ASIC +$100M", f"={CL(a2026)}{R['gd_dcai_ai_asic']}", "100",
+         "AI/ASIC passes through 1:1"),
+        ("Foundry: Total Chip Vol +1%", f"={CL(a2026)}{R['gd_foundry_vol']}", f"={CL(a2026)}{R['gd_foundry_internal_rev']}*0.01",
+         "Chip vol elasticity applies to internal Foundry only"),
+        ("Foundry: Internal Rev/Chip +$1", f"={CL(a2026)}{R['gd_foundry_rev_per_chip']}", f"={CL(a2026)}{R['gd_foundry_vol']}",
+         "$1 Rev/Chip x total units = material swing"),
+        ("All Other: LV Production +1%", f"={CL(a2026)}{R['gd_allother_lv_prod']}", f"={CL(a2026)}{R['gd_allother_mbly_rev']}*0.01",
+         "Auto production sensitivity"),
+    ]
+    for label, val_formula, impact_formula, note_txt in s_items:
+        _label(ws, r, f"  {label}")
+        c22 = ws.cell(row=r, column=22, value=val_formula)
+        c22.font = FONT_FORM; c22.border = BD; c22.alignment = ALIGN_RIGHT
+        c22.number_format = "#,##0.0" if "M" not in label and "TAM" not in label and "Vol" not in label else "#,##0.0"
+        if "Share" in label or "ASP" in label:
+            c22.number_format = "0.0%" if "Share" in label else "0.0"
+        c24 = ws.cell(row=r, column=24, value=impact_formula)
+        c24.font = FONT_FORM; c24.number_format = "#,##0"; c24.border = BD; c24.alignment = ALIGN_RIGHT
+        for cc in [23, 25]:
+            ws.cell(row=r, column=cc).border = BD
+        _note(ws, r, note_txt)
+        r += 1
 
-    # PC TAM: 1% change
-    _label(ws, r, "  PC TAM")
-    _lval(ws, r, 6, f"=F{R['gd_ccg_tam']}", "#,##0.0")
-    ws.cell(row=r, column=7, value="±1%").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_ccg_implied_rev']}*0.01", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_ccg_implied_rev']}")
-    _note(ws, r, "PC TAM elasticity = 1:1 with CCG revenue (multiplicative driver)"); r += 1
+    # Column widths for GD tab
+    ws.column_dimensions['A'].width = 44
+    for c in range(2, GD_NCOL + 1):
+        cl = CL(c)
+        if c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.column_dimensions[cl].width = 2
+        elif c in GD_ANN_COLS_LIST:
+            ws.column_dimensions[cl].width = 15
+        elif c == GD_NCOL:
+            ws.column_dimensions[cl].width = 55
+        else:
+            ws.column_dimensions[cl].width = 12
 
-    # Intel PC Share: 1pp change
-    _label(ws, r, "  Intel PC Share")
-    _lval(ws, r, 6, f"=F{R['gd_ccg_share']}", "0.0%")
-    ws.cell(row=r, column=7, value="±1pp").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_ccg_tam']}*0.01*F{R['gd_ccg_asp']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_ccg_implied_rev']}")
-    _note(ws, r, "1pp share shift = TAM × 1% × ASP. Most sensitive CCG driver"); r += 1
-
-    # CCG ASP: $1 change
-    _label(ws, r, "  CCG Blended ASP")
-    _lval(ws, r, 6, f"=F{R['gd_ccg_asp']}", "0")
-    ws.cell(row=r, column=7, value="±$1").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_ccg_units']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_ccg_implied_rev']}")
-    _note(ws, r, "$1 ASP change = Units × $1 impact"); r += 2
-
-    # ---- DCAI Sensitivities ----
-    _label(ws, r, "DCAI Drivers", bold=True); r += 1
-
-    # Server TAM
-    _label(ws, r, "  Server TAM")
-    _lval(ws, r, 6, f"=F{R['gd_dcai_tam']}", "#,##0.0")
-    ws.cell(row=r, column=7, value="±1%").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_dcai_cpu_rev']}*0.01", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_dcai_implied_rev']}")
-    _note(ws, r, "Server TAM elasticity applies to CPU revenue only (not AI/ASIC)"); r += 1
-
-    # Intel DC Share
-    _label(ws, r, "  Intel DC Server Share")
-    _lval(ws, r, 6, f"=F{R['gd_dcai_share']}", "0.0%")
-    ws.cell(row=r, column=7, value="±1pp").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_dcai_tam']}*0.01*F{R['gd_dcai_asp']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_dcai_implied_rev']}")
-    _note(ws, r, "1pp share shift in DC CPU market. Most sensitive DCAI driver"); r += 1
-
-    # Server ASP
-    _label(ws, r, "  Server Blended ASP")
-    _lval(ws, r, 6, f"=F{R['gd_dcai_asp']}", "#,##0")
-    ws.cell(row=r, column=7, value="±$1").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_dcai_units']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_dcai_implied_rev']}")
-    _note(ws, r, "$1 ASP change = DC Units × $1 impact"); r += 1
-
-    # AI/ASIC
-    _label(ws, r, "  AI/ASIC Revenue")
-    _lval(ws, r, 6, f"=F{R['gd_dcai_ai_asic']}", "#,##0")
-    ws.cell(row=r, column=7, value="±$100M").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"100", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_dcai_implied_rev']}")
-    _note(ws, r, "AI/ASIC passes through 1:1 to DCAI revenue"); r += 2
-
-    # ---- Intel Foundry Sensitivities ----
-    _label(ws, r, "Intel Foundry Drivers", bold=True); r += 1
-
-    # Total Chip Vol
-    _label(ws, r, "  Total Intel Chip Vol")
-    _lval(ws, r, 6, f"=F{R['gd_foundry_vol']}", "#,##0.0")
-    ws.cell(row=r, column=7, value="±1%").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_foundry_internal_rev']}*0.01", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_foundry_implied_rev']}")
-    _note(ws, r, "Chip vol elasticity applies to internal Foundry only"); r += 1
-
-    # Internal Rev/Chip
-    _label(ws, r, "  Internal Rev per Chip")
-    _lval(ws, r, 6, f"=F{R['gd_foundry_rev_per_chip']}", "0.0")
-    ws.cell(row=r, column=7, value="±$1").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_foundry_vol']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_foundry_implied_rev']}")
-    _note(ws, r, "$1 Rev/Chip change = Total Chip Vol × $1. High sensitivity given 197M+ unit base"); r += 1
-
-    # External Foundry
-    _label(ws, r, "  External Foundry Rev")
-    _lval(ws, r, 6, f"=F{R['gd_foundry_ext_rev']}", "#,##0")
-    ws.cell(row=r, column=7, value="±$100M").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"100", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_foundry_implied_rev']}")
-    _note(ws, r, "External Foundry passes through 1:1"); r += 2
-
-    # ---- All Other Sensitivities ----
-    _label(ws, r, "All Other Drivers", bold=True); r += 1
-
-    # LV Production
-    _label(ws, r, "  Global LV Production")
-    _lval(ws, r, 6, f"=F{R['gd_allother_lv_prod']}", "#,##0.0")
-    ws.cell(row=r, column=7, value="±1%").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_allother_mbly_rev']}*0.01", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_allother_implied_rev']}")
-    _note(ws, r, "LV Prod elasticity applies to Mobileye revenue only"); r += 1
-
-    # MBLY Rev/Vehicle
-    _label(ws, r, "  Mobileye Rev per Vehicle")
-    _lval(ws, r, 6, f"=F{R['gd_allother_mbly_rpv']}", "0.0")
-    ws.cell(row=r, column=7, value="±$1").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"=F{R['gd_allother_lv_prod']}", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_allother_implied_rev']}")
-    _note(ws, r, "$1 Rev/Veh change = LV Production × $1"); r += 1
-
-    # IMS & Other
-    _label(ws, r, "  IMS & Other Revenue")
-    _lval(ws, r, 6, f"=F{R['gd_allother_ims']}", "#,##0")
-    ws.cell(row=r, column=7, value="±$100M").font = Font(size=9); ws.cell(row=r, column=7).border = BD
-    _fval(ws, r, 8, f"100", "#,##0")
-    _pct(ws, r, 9, f"=H{r}/F{R['gd_allother_implied_rev']}")
-    _note(ws, r, "IMS/Other passes through 1:1"); r += 2
-
-    # Summary: Top 3 Most Sensitive Drivers
-    _section(ws, r, "Top 3 Most Sensitive Drivers (by Revenue Impact per unit change)"); r += 1
-    _label(ws, r, "1. Intel PC Share: each 1pp = significant revenue swing (largest CCG driver)")
-    _note(ws, r, "CCG is ~58% of consolidated revenue; share shifts have outsized impact"); r += 1
-    _label(ws, r, "2. Internal Foundry Rev/Chip: $1 change × 197M+ units = material Foundry revenue swing")
-    _note(ws, r, "Internal transfer pricing is the key Foundry profitability lever"); r += 1
-    _label(ws, r, "3. Intel DC Server Share: each 1pp = material DCAI CPU revenue swing")
-    _note(ws, r, "Server CPU share is the battleground vs AMD Turin; Granite Rapids competitiveness key"); r += 1
-
-    _set_col_widths(ws)
     lr = _add_legend(ws, r + 1)
     _add_sources(ws, lr + 1)
     ws.sheet_properties.tabColor = "7030A0"
     return r
 
 
-# ============================================================
-# TAB 5: SEGMENT_REVENUE (Bottom-Up Build)
-# ============================================================
-
-def build_segment_revenue(wb, R):
-    """Build segment revenue tab: 4 segments + YoY + mix + consolidated total."""
-    ws = wb["Segment_Revenue"]
-    _title_row(ws, 1, "Intel (INTC) — Segment Revenue")
-    _unit_row(ws, 2)
-    _yr_header_no_scenario(ws, 3)
-    _label(ws, 4, "USD Million"); _note(ws, 4, "Historical from 10-K Note 3; Forecast = Prior x (1 + growth)")
-
-    r = 5
-    segs = [
-        ("CCG", "CCG - Client Computing Group",
-         [32305, 33346, 32228],
-         ["asp_ccg_g_2026e", "asp_ccg_g_2027e", "asp_ccg_g_2028e"]),
-        ("DCAI", "DCAI - Data Center & AI",
-         [15980, 16125, 16919],
-         ["asp_dcai_g_2026e", "asp_dcai_g_2027e", "asp_dcai_g_2028e"]),
-        ("Foundry", "Intel Foundry",
-         [18504, 17317, 17826],
-         ["asp_foundry_g_2026e", "asp_foundry_g_2027e", "asp_foundry_g_2028e"]),
-        ("AllOther", "All Other (Mobileye + IMS + Other)",
-         [5463, 3601, 3563],
-         ["asp_allother_g_2026e", "asp_allother_g_2027e", "asp_allother_g_2028e"]),
-    ]
-
-    gd_implied_keys = {
-        "CCG": "gd_ccg_implied_rev", "DCAI": "gd_dcai_implied_rev",
-        "Foundry": "gd_foundry_implied_rev", "AllOther": "gd_allother_implied_rev",
-    }
-    for seg_key, seg_label, hist_rev, growth_keys in segs:
-        _label(ws, r, seg_label, bold=True)
-        for ci, yr_col in enumerate(HIST_COLS):
-            _hval(ws, r, yr_col, hist_rev[ci])
-        # Forecast: deferred to pass 2 (Growth_Drivers built first, then linked)
-        _note(ws, r, f"Forecast: Links to Growth_Drivers bottom-up implied revenue (pass 2)")
-        R[f"segrev_{seg_key.lower()}"] = r
-        r += 1
-
-        # YoY %
-        _pct(ws, r, HIST_COLS[1],
-             f"=({CL(HIST_COLS[1])}{r-1}-{CL(HIST_COLS[0])}{r-1})/{CL(HIST_COLS[0])}{r-1}")
-        _pct(ws, r, HIST_COLS[2],
-             f"=({CL(HIST_COLS[2])}{r-1}-{CL(HIST_COLS[1])}{r-1})/{CL(HIST_COLS[1])}{r-1}")
-        for fc in FCST_COLS:
-            prev = CL(fc-4) if fc == 6 else CL(fc-1)
-            _pct(ws, r, fc, f"={CL(fc)}{r-1}/{prev}{r-1}-1")
-        _note(ws, r, "YoY Growth %")
-        r += 2  # spacer
-
-    # Memo: Total Segment Revenue (includes internal Foundry)
-    _section(ws, r, "Memo: Total Segment Revenue (incl. internal Foundry)")
-    for col in HIST_COLS + FCST_COLS:
-        parts = "+".join([f"{CL(col)}{R['segrev_'+k]}" for k in ["ccg","dcai","foundry","allother"]])
-        _fval(ws, r, col, f"={parts}")
-    _note(ws, r, "Sum of 4 reported segments; Foundry ~99% internal → excluded from consolidated")
-    R["segrev_sum_segments"] = r; r += 2
-
-    # External Foundry Revenue (the portion sold to 3rd-party customers)
-    _label(ws, r, "External Foundry Revenue (3rd-party only)")
-    hist_ext_foundry = [50, 60, 150]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_ext_foundry[ci])
-    for fc in FCST_COLS:
-        fc_year = {6: "2026e", 7: "2027e", 8: "2028e"}[fc]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_ext_foundry_{fc_year}']}")
-    _note(ws, r, "~1% of total Foundry revenue historically. Growing as 18A/14A external customers ramp")
-    R["segrev_ext_foundry"] = r; r += 1
-
-    # Intersegment Eliminations (historical are small residual; bulk Foundry internal excluded from sum)
-    _label(ws, r, "Intersegment Eliminations")
-    hist_elim = [-205, -161, 619]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_elim[ci])
-    for fc in FCST_COLS:
-        _lval(ws, r, fc, f"=Assumptions!I{R['asp_inter_elim']}")
-    _note(ws, r, "Residual elim; Foundry~Products internal wafer sales excluded from consolidated"); r += 1
-
-    # Consolidated Revenue — historical hardcoded (10-K facts), forecast = CCG+DCAI+ExtFoundry+AllOther+Elim
-    _section(ws, r, "TOTAL Consolidated Revenue")
-    hist_consol = [54228, 53101, 52853]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_consol[ci])
-    for fc in FCST_COLS:
-        ext_parts = "+".join([f"{CL(fc)}{R['segrev_'+k]}" for k in ["ccg","dcai","allother"]])
-        formula = f"={ext_parts}+{CL(fc)}{R['segrev_ext_foundry']}+{CL(fc)}{r-1}"
-        _key(ws, r, fc, formula)
-    _note(ws, r, "Historical: 10-K actuals. Forecast: CCG+DCAI+ExtFoundry+AllOther+Elim. Links to Consolidated_PL")
-    R["segrev_consol_rev"] = r; r += 2
-
-    # Revenue Mix
-    _section(ws, r, "Revenue Mix (% of Consolidated)")
-    for sk, sl in [("ccg","CCG %"),("dcai","DCAI %"),("allother","All Other %")]:
-        _label(ws, r, f"  {sl}")
-        for col in HIST_COLS + FCST_COLS:
-            _pct(ws, r, col, f"={CL(col)}{R['segrev_'+sk]}/{CL(col)}{R['segrev_consol_rev']}")
-        r += 1
-    # Foundry mix uses external Foundry revenue
-    _label(ws, r, "  External Foundry %")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col, f"={CL(col)}{R['segrev_ext_foundry']}/{CL(col)}{R['segrev_consol_rev']}")
-    _note(ws, r, "External foundry only; internal wafer sales eliminated"); r += 1
-    # Memo: Total Foundry as % of segment sum
-    _label(ws, r, "  Memo: Total Foundry / Seg Sum")
-    for col in HIST_COLS + FCST_COLS:
-        _pct(ws, r, col, f"={CL(col)}{R['segrev_foundry']}/{CL(col)}{R['segrev_sum_segments']}")
-    _note(ws, r, "Shows Foundry scale relative to all segments"); r += 1
-
-    _set_col_widths(ws)
-    lr = _add_legend(ws, r + 1)
-    _add_sources(ws, lr + 1)
-    ws.sheet_properties.tabColor = "548235"
-    return r
-
-
-def build_segment_revenue_link_gd(wb, R):
-    """Pass 2: Link Segment_Revenue forecast columns to Growth_Drivers implied revenue.
-    Called after Growth_Drivers is built to avoid circular R-key dependency."""
-    ws = wb["Segment_Revenue"]
-
-    seg_to_gd = {
-        "segrev_ccg": "gd_ccg_implied_rev",
-        "segrev_dcai": "gd_dcai_implied_rev",
-        "segrev_foundry": "gd_foundry_implied_rev",
-        "segrev_allother": "gd_allother_implied_rev",
-    }
-
-    for seg_key, gd_key in seg_to_gd.items():
-        r = R[seg_key]
-        for fc in FCST_COLS:
-            f_text = f"=Growth_Drivers!{CL(fc)}{R[gd_key]}"
-            ws.cell(row=r, column=fc, value=f_text)
-            ws.cell(row=r, column=fc).font = Font(color="548235")
-            ws.cell(row=r, column=fc).number_format = "#,##0"
-            ws.cell(row=r, column=fc).border = BD
-
-
-# ============================================================
-# TAB 5: SEGMENT_PL (Operating Income by Division)
-# ============================================================
-
 def build_segment_pl(wb, R):
-    """Build Segment P&L. FIRST PASS - cross-check row filled in pass 2."""
+    """Build Segment P&L tab with QUARTERLY revenue + OI per segment.
+    Annual rollup columns (6,11,16,22,27,32) link to Consolidated_PL annual tabs.
+    FIRST PASS - historical hardcoded, forecast deferred to pass 2 (Growth_Drivers link)."""
     ws = wb["Segment_PL"]
-    _title_row(ws, 1, "Intel (INTC) - Segment P&L (Operating Income by Division)")
+    _title_row(ws, 1, "Intel (INTC) - Segment P&L (Revenue + Operating Income, Quarterly)")
     _unit_row(ws, 2)
-    _yr_header_no_scenario(ws, 3)
-    _label(ws, 4, "USD Million (except margin %)")
-    _note(ws, 4, "OI = Segment Revenue x OPM% from Assumptions. EBIT links to Consolidated_PL.")
+    _qheader(ws, 3)
+    _label(ws, 4, "USD Million (except margin %). Quarters Q1-Q4 with FY annual rollup.")
+    _note(ws, 4, "Segment revenue + OI quarterly. Forecast links to Growth_Drivers. Annual cols -> Consolidated_PL.")
 
     r = 5
     segs = [
-        ("CCG", "CCG - Client Computing Group", "ccg", "segrev_ccg",
-         {"2026e": "asp_ccg_opm_2026e", "2027e": "asp_ccg_opm_2027e", "2028e": "asp_ccg_opm_2028e"},
+        ("CCG", "CCG - Client Computing Group", "ccg",
+         [32305, 33346, 32228],
+         "asp_ccg_opm",
          [10128, 11594, 9317]),
-        ("DCAI", "DCAI - Data Center & AI", "dcai", "segrev_dcai",
-         {"2026e": "asp_dcai_opm_2026e", "2027e": "asp_dcai_opm_2027e", "2028e": "asp_dcai_opm_2028e"},
+        ("DCAI", "DCAI - Data Center & AI", "dcai",
+         [15980, 16125, 16919],
+         "asp_dcai_opm",
          [945, 1414, 3422]),
-        ("Foundry", "Intel Foundry", "foundry", "segrev_foundry",
-         {"2026e": "asp_foundry_opm_2026e", "2027e": "asp_foundry_opm_2027e", "2028e": "asp_foundry_opm_2028e"},
+        ("Foundry", "Intel Foundry", "foundry",
+         [18504, 17317, 17826],
+         "asp_foundry_opm",
          [-7083, -13291, -10318]),
-        ("AllOther", "All Other (Mobileye + IMS + Other)", "allother", "segrev_allother",
-         {"2026e": "asp_allother_opm_2026e", "2027e": "asp_allother_opm_2027e", "2028e": "asp_allother_opm_2028e"},
+        ("AllOther", "All Other (Mobileye + IMS + Other)", "allother",
+         [5463, 3601, 3563],
+         "asp_allother_opm",
          [1507, -57, 264]),
     ]
 
-    for seg_label, seg_desc, seg_key, rev_key, opm_keys, hist_oi in segs:
+    for seg_label, seg_desc, seg_key, hist_rev_ann, opm_key, hist_oi_ann in segs:
+        # ---- Revenue (quarterly) ----
         _label(ws, r, seg_desc, bold=True)
-        # Revenue (link)
-        for col in HIST_COLS + FCST_COLS:
-            _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R[rev_key]}")
-        _note(ws, r, "Revenue <- links Segment_Revenue"); r += 1
+        # Historical: quarterly from GD_QREV, fallback to annual/4
+        qdata = GD_QREV.get(seg_key, {})
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+            qv = qdata.get(year, {})
+            hist_ann = hist_rev_ann[year - 2023]
+            for qi, qc in enumerate(qcols):
+                qnum = qi + 1
+                if qnum in qv:
+                    _hval(ws, r, qc, qv[qnum], "#,##0")
+                else:
+                    _hval(ws, r, qc, hist_ann / 4.0, "#,##0")
+            _hval(ws, r, ann_col, hist_ann, "#,##0")
+        # Forecast: linked to GD in pass 2, placeholder borders for now
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+            for qc in qcols:
+                ws.cell(row=r, column=qc).border = BD
+            ws.cell(row=r, column=ann_col).border = BD
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, "Forecast: Links to Growth_Drivers implied revenue (pass 2). Annual = SUM(Q1:Q4).")
+        R[f"segpl_{seg_key}_rev"] = r
+        r += 1
 
-        # Operating Income
+        # ---- YoY% (annual cols only) ----
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+            if year == 2023:
+                continue
+            prev_ann = GD_ALL_YEARS[year - 2024][2]  # prior year annual col
+            _pct(ws, r, ann_col, f"={CL(ann_col)}{r-1}/{CL(prev_ann)}{r-1}-1")
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, "YoY Growth % on annual basis")
+        r += 1
+
+        # ---- Operating Income (quarterly) ----
         _label(ws, r, "  Operating Income")
-        for ci, col in enumerate(HIST_COLS):
-            _hval(ws, r, col, hist_oi[ci])
-        yr_labels = ["2026e", "2027e", "2028e"]
-        for fi, fc in enumerate(FCST_COLS):
-            yr = yr_labels[fi]
-            _fval(ws, r, fc, f"={CL(fc)}{r-1}*Assumptions!I{R[opm_keys[yr]]}")
-        _note(ws, r, f"Forecast = Revenue x OPM% from Assumptions")
-        R[f"segpl_{seg_key}_oi"] = r; r += 1
+        # Historical: annual/4 per quarter
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[:3]:
+            qoi = hist_oi_ann[year - 2023] / 4.0
+            for qc in qcols:
+                _hval(ws, r, qc, qoi, "#,##0")
+            _hval(ws, r, ann_col, hist_oi_ann[year - 2023], "#,##0")
+        # Forecast: quarterly OI = Rev_q x OPM_q from Assumptions
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:
+            for qc in qcols:
+                _fval(ws, r, qc, f"={CL(qc)}{r-2}*Assumptions!{CL(qc)}{R[opm_key]}", "#,##0")
+            _fval(ws, r, ann_col, f"=SUM({CL(qcols[0])}{r}:{CL(qcols[3])}{r})", "#,##0")
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        _note(ws, r, "Forecast = Quarterly Revenue x Quarterly OPM% from Assumptions. Annual = SUM(Q1:Q4).")
+        R[f"segpl_{seg_key}_oi"] = r
+        r += 1
 
-        # OPM %
+        # ---- OPM% ----
         _label(ws, r, "  Operating Margin %")
-        for col in HIST_COLS + FCST_COLS:
-            _pct(ws, r, col, f"={CL(col)}{r-1}/{CL(col)}{r-2}")
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+            for qc in qcols:
+                _pct(ws, r, qc, f"={CL(qc)}{r-1}/{CL(qc)}{r-3}")
+            _pct(ws, r, ann_col, f"={CL(ann_col)}{r-1}/{CL(ann_col)}{r-3}")
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
         r += 2  # spacer
 
-    # Corporate Unallocated
+    # ---- Corporate Unallocated (annual-only, quarters blank) ----
     _section(ws, r, "Corporate Unallocated")
     hist_corp = [-5199, -11177, -5518]
-    for ci, col in enumerate(HIST_COLS):
-        _hval(ws, r, col, hist_corp[ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_corp_unalloc_{yr}']}")
-    _note(ws, r, "From Assumptions. Declining from cost-cutting."); r += 1
+    for ci, (yr, qc, ac, sf) in enumerate(GD_ALL_YEARS[:3]):
+        _hval(ws, r, ac, hist_corp[ci])
+    for yr, qc, ac, sf in GD_ALL_YEARS[3:]:
+        _lval(ws, r, ac, f"=Assumptions!{CL(ac)}{R['asp_corp_unalloc']}")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Annual-only from Assumptions. Quarters blank (non-segment allocation).")
+    R["segpl_corp_unalloc"] = r
+    r += 1
 
-    # Sum of Segment OI
+    # ---- Sum of Segment OI + Corp Unalloc (quarterly) ----
     _section(ws, r, "Sum of Segment Operating Income + Corp Unalloc")
-    for col in HIST_COLS + FCST_COLS:
-        parts = "+".join([f"{CL(col)}{R['segpl_'+k+'_oi']}" for k in ["ccg","dcai","foundry","allother"]])
-        _key(ws, r, col, f"={parts}+{CL(col)}{r-1}")
-    _note(ws, r, "KEY OUTPUT. Links to Consolidated_PL EBIT.")
-    R["segpl_sum_oi"] = r; r += 2
+    seg_keys = ["ccg", "dcai", "foundry", "allother"]
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        for qc in qcols:
+            parts = "+".join([f"{CL(qc)}{R['segpl_'+k+'_oi']}" for k in seg_keys])
+            _key(ws, r, qc, f"={parts}+{CL(qc)}{R['segpl_corp_unalloc']}")
+        parts_a = "+".join([f"{CL(ann_col)}{R['segpl_'+k+'_oi']}" for k in seg_keys])
+        _key(ws, r, ann_col, f"={parts_a}+{CL(ann_col)}{R['segpl_corp_unalloc']}")
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "KEY OUTPUT. Links to Consolidated_PL EBIT via annual columns.")
+    R["segpl_sum_oi"] = r
+    r += 2
 
-    # Cross-check placeholder
-    _section(ws, r, "CROSS-CHECK: Sum Seg OI vs Consolidated EBIT")
-    _label(ws, r+1, "  Segment Sum OI")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r+1, col, f"={CL(col)}{R['segpl_sum_oi']}")
-    _label(ws, r+2, "  Consolidated_PL EBIT")
-    _note(ws, r+2, "TODO: fill in pass 2 after Consolidated_PL built")
-    _label(ws, r+3, "  Difference (MUST = 0)")
-    for col in HIST_COLS + FCST_COLS:
-        _fval(ws, r+3, col, f"={CL(col)}{r+1}-{CL(col)}{r+2}", "0.0")
-    _note(ws, r+3, "MUST = 0 - validates segment/consolidated linkage")
-    R["segpl_xcheck_sum_oi"] = r+1
-    R["segpl_xcheck_ebit"] = r+2
-    R["segpl_xcheck_diff"] = r+3
+    # ---- Cross-check placeholder (annual cols only, filled pass 3) ----
+    _section(ws, r, "CROSS-CHECK: Sum Seg OI vs Consolidated EBIT (Annual)")
+    _label(ws, r + 1, "  Segment Sum OI (annual)")
+    _label(ws, r + 2, "  Consolidated_PL EBIT")
+    _note(ws, r + 2, "TODO: fill in pass 3 after Consolidated_PL built")
+    _label(ws, r + 3, "  Difference (MUST = 0)")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _fval(ws, r + 1, ann_col, f"={CL(ann_col)}{R['segpl_sum_oi']}")
+        _fval(ws, r + 3, ann_col, f"={CL(ann_col)}{r+1}-{CL(ann_col)}{r+2}", "#,##0")
+        for qc in qcols:
+            ws.cell(row=r + 1, column=qc).border = BD
+            ws.cell(row=r + 2, column=qc).border = BD
+            ws.cell(row=r + 3, column=qc).border = BD
+    _note(ws, r + 3, "MUST = 0 - validates segment/consolidated linkage")
+    R["segpl_xcheck_sum_oi"] = r + 1
+    R["segpl_xcheck_ebit"] = r + 2
+    R["segpl_xcheck_diff"] = r + 3
     r = r + 4
+
+    # ---- Memo: Total Segment Revenue (includes internal Foundry) ----
+    _section(ws, r, "Memo: Total Segment Revenue (incl. internal Foundry, annual)")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        parts = "+".join([f"{CL(ann_col)}{R['segpl_'+k+'_rev']}" for k in seg_keys])
+        _fval(ws, r, ann_col, f"={parts}")
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Sum of 4 reported segments; Foundry ~99% internal -> excluded from consolidated")
+    R["segpl_sum_segments"] = r
+    r += 2
+
+    # ---- External Foundry Revenue (annual-only) ----
+    _label(ws, r, "External Foundry Revenue (3rd-party only, annual)")
+    hist_ext_foundry = [50, 60, 150]
+    for ci, (yr, qc, ac, sf) in enumerate(GD_ALL_YEARS[:3]):
+        _hval(ws, r, ac, hist_ext_foundry[ci])
+    for yr, qc, ac, sf in GD_ALL_YEARS[3:]:
+        _lval(ws, r, ac, f"=Assumptions!{CL(ac)}{R['asp_ext_foundry']}")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "~1% of total Foundry revenue historically. Growing as 18A/14A external customers ramp")
+    R["segpl_ext_foundry"] = r
+    r += 1
+
+    # ---- Intersegment Eliminations (annual-only) ----
+    _label(ws, r, "Intersegment Eliminations (annual)")
+    hist_elim = [-205, -161, 619]
+    for ci, (yr, qc, ac, sf) in enumerate(GD_ALL_YEARS[:3]):
+        _hval(ws, r, ac, hist_elim[ci])
+    for yr, qc, ac, sf in GD_ALL_YEARS[3:]:
+        _lval(ws, r, ac, f"=Assumptions!{CL(ac)}{R['asp_inter_elim']}")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Residual elim; Foundry~Products internal wafer sales excluded from consolidated")
+    R["segpl_elim"] = r
+    r += 1
+
+    # ---- TOTAL Consolidated Revenue (annual-only) ----
+    _section(ws, r, "TOTAL Consolidated Revenue (annual)")
+    hist_consol = [54228, 53101, 52853]
+    for ci, (yr, qc, ac, sf) in enumerate(GD_ALL_YEARS[:3]):
+        _hval(ws, r, ac, hist_consol[ci])
+    for yr, qc, ac, sf in GD_ALL_YEARS[3:]:
+        ext_parts = "+".join([f"{CL(ac)}{R['segpl_'+k+'_rev']}" for k in ["ccg", "dcai", "allother"]])
+        formula = f"={ext_parts}+{CL(ac)}{R['segpl_ext_foundry']}+{CL(ac)}{R['segpl_elim']}"
+        _key(ws, r, ac, formula)
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Historical: 10-K actuals. Forecast: CCG+DCAI+ExtFoundry+AllOther+Elim. Links to Consolidated_PL.")
+    R["segpl_consol_rev"] = r
+    r += 2
+
+    # ---- Revenue Mix (annual-only) ----
+    _section(ws, r, "Revenue Mix (% of Consolidated, annual)")
+    for sk, sl in [("ccg", "CCG %"), ("dcai", "DCAI %"), ("allother", "All Other %")]:
+        _label(ws, r, f"  {sl}")
+        for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+            _pct(ws, r, ann_col, f"={CL(ann_col)}{R['segpl_'+sk+'_rev']}/{CL(ann_col)}{R['segpl_consol_rev']}")
+            for qc in qcols:
+                ws.cell(row=r, column=qc).border = BD
+        for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+            ws.cell(row=r, column=c).border = BD
+        r += 1
+    _label(ws, r, "  External Foundry %")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['segpl_ext_foundry']}/{CL(ann_col)}{R['segpl_consol_rev']}")
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "External foundry only; internal wafer sales eliminated")
+    r += 1
+    _label(ws, r, "  Memo: Total Foundry / Seg Sum")
+    for yr, qcols, ann_col, suffix in GD_ALL_YEARS:
+        _pct(ws, r, ann_col, f"={CL(ann_col)}{R['segpl_foundry_rev']}/{CL(ann_col)}{R['segpl_sum_segments']}")
+        for qc in qcols:
+            ws.cell(row=r, column=qc).border = BD
+    for c in [GD_SPACER_COL, GD_SPACER2_COL]:
+        ws.cell(row=r, column=c).border = BD
+    _note(ws, r, "Shows Foundry scale relative to all segments")
+    r += 1
 
     _set_col_widths(ws)
     lr = _add_legend(ws, r + 1)
@@ -1529,11 +1876,43 @@ def build_segment_pl(wb, R):
 
 
 def build_segment_pl_pass2(wb, R):
-    """Second pass: fill cross-check link from Segment_PL to Consolidated_PL EBIT."""
+    """Pass 2: Link Segment_PL forecast QUARTERLY revenue to Growth_Drivers implied revenue.
+    Called after Growth_Drivers is built to avoid circular R-key dependency.
+    Both Segment_PL and Growth_Drivers use same quarterly columns -> direct column match."""
     ws = wb["Segment_PL"]
-    for col in HIST_COLS + FCST_COLS:
-        c = ws.cell(row=R["segpl_xcheck_ebit"], column=col,
-                    value=f"=Consolidated_PL!{CL(col)}{R['pl_ebit']}")
+
+    seg_to_gd = {
+        "segpl_ccg_rev": "gd_ccg_implied_rev",
+        "segpl_dcai_rev": "gd_dcai_implied_rev",
+        "segpl_foundry_rev": "gd_foundry_implied_rev",
+        "segpl_allother_rev": "gd_allother_implied_rev",
+    }
+
+    for seg_key, gd_key in seg_to_gd.items():
+        r = R[seg_key]
+        for year, qcols, ann_col, suffix in GD_ALL_YEARS[3:]:  # forecast years (2026-2028)
+            for qc in qcols:
+                f_text = f"=Growth_Drivers!{CL(qc)}{R[gd_key]}"
+                ws.cell(row=r, column=qc, value=f_text)
+                ws.cell(row=r, column=qc).font = Font(color="548235")
+                ws.cell(row=r, column=qc).number_format = "#,##0"
+                ws.cell(row=r, column=qc).border = BD
+            ws.cell(row=r, column=ann_col, value=f"=SUM({CL(qcols[0])}{r}:{CL(qcols[3])}{r})")
+            ws.cell(row=r, column=ann_col).font = Font(color="548235")
+            ws.cell(row=r, column=ann_col).number_format = "#,##0"
+            ws.cell(row=r, column=ann_col).border = BD
+
+
+def build_segment_pl_pass3(wb, R):
+    """Third pass: fill cross-check link from Segment_PL to Consolidated_PL EBIT.
+    Segment_PL uses quarterly annual columns (6,11,16,22,27,32).
+    Consolidated_PL uses annual-tab columns (2,3,4,6,7,8)."""
+    ws = wb["Segment_PL"]
+    yr_to_ann_col = {2023: 2, 2024: 3, 2025: 4, 2026: 6, 2027: 7, 2028: 8}
+    for year, qcols, ann_col, suffix in GD_ALL_YEARS:
+        ann_tab_col = yr_to_ann_col[year]
+        c = ws.cell(row=R["segpl_xcheck_ebit"], column=ann_col,
+                    value=f"=Consolidated_PL!{CL(ann_tab_col)}{R['pl_ebit']}")
         c.font = FONT_LINK; c.number_format = "#,##0"; c.border = BD; c.alignment = ALIGN_RIGHT
 
 
@@ -1551,22 +1930,20 @@ def build_consolidated_pl(wb, R):
     _note(ws, 4, "Cost structure by type. EBIT = Segment_PL Sum OI (segment-driven).")
 
     r = 5
-    yr_labels = ["2026e", "2027e", "2028e"]
 
     # Revenue
     _label(ws, r, "Net Revenue", bold=True)
     for col in HIST_COLS + FCST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_consol_rev']}")
-    _note(ws, r, "<- Segment_Revenue consolidated total")
+        _lval(ws, r, col, f"=Segment_PL!{CL(SEGPL_COL_MAP[col])}{R['segpl_consol_rev']}")
+    _note(ws, r, "<- Segment_PL consolidated total")
     R["pl_rev"] = r; r += 1
 
     # COGS
     _label(ws, r, "Cost of Sales")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [32517, 35756, 34478][ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!I{R[f'asp_cogs_{yr}']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_cogs']}")
     _note(ws, r, "= Revenue x COGS% from Assumptions")
     R["pl_cogs"] = r; r += 1
 
@@ -1588,18 +1965,16 @@ def build_consolidated_pl(wb, R):
     _label(ws, r, "Research & Development")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [16046, 16546, 13774][ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!I{R[f'asp_rd_{yr}']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_rd']}")
     _note(ws, r, "= Revenue x R&D%")
     R["pl_rd"] = r; r += 1
 
     _label(ws, r, "Marketing, General & Administrative")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [5634, 5507, 4624][ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!I{R[f'asp_mga_{yr}']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"={CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_mga']}")
     _note(ws, r, "= Revenue x MG&A%")
     R["pl_mga"] = r; r += 1
 
@@ -1607,7 +1982,7 @@ def build_consolidated_pl(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [-62, 6970, 2191][ci])
     for fc in FCST_COLS:
-        _lval(ws, r, fc, f"=Assumptions!I{R['asp_restruct']}")
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_restruct']}")
     _note(ws, r, "From Assumptions; winding down"); r += 1
 
     # Total OpEx (top-down)
@@ -1621,7 +1996,7 @@ def build_consolidated_pl(wb, R):
     _section(ws, r, "EBIT - Segment-Driven"); r += 1
     _label(ws, r, "EBIT (Operating Income)", bold=True)
     for col in HIST_COLS + FCST_COLS:
-        _lval(ws, r, col, f"=Segment_PL!{CL(col)}{R['segpl_sum_oi']}")
+        _lval(ws, r, col, f"=Segment_PL!{CL(SEGPL_COL_MAP[col])}{R['segpl_sum_oi']}")
     _note(ws, r, "<- Segment_PL Sum of Segment OI. SEGMENT-DRIVEN source of truth.")
     R["pl_ebit"] = r; r += 1
 
@@ -1640,9 +2015,8 @@ def build_consolidated_pl(wb, R):
     _label(ws, r, "Interest & Other, Net")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [629, 226, 3257][ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_interest_{yr}']}")
+    for fc in FCST_COLS:
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_interest']}")
     _note(ws, r, "Net interest expense on debt")
     R["pl_interest"] = r; r += 1
 
@@ -1664,11 +2038,9 @@ def build_consolidated_pl(wb, R):
     _label(ws, r, "Provision for (Benefit from) Taxes")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [-913, 8023, 1531][ci])
-    etr_keys = {"2026e": "asp_etr_sel", "2027e": "asp_etr_2027e", "2028e": "asp_etr_2028e"}
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
+    for fc in FCST_COLS:
         _fval(ws, r, fc,
-              f"=IF({CL(fc)}{R['pl_pretax']}>0,{CL(fc)}{R['pl_pretax']}*Assumptions!I{R[etr_keys[yr]]},0)")
+              f"=IF({CL(fc)}{R['pl_pretax']}>0,{CL(fc)}{R['pl_pretax']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_etr']},0)")
     _note(ws, r, "Tax on positive pretax only (valuation allowance shields US losses)")
     R["pl_tax"] = r; r += 1
 
@@ -1687,10 +2059,8 @@ def build_consolidated_pl(wb, R):
     _label(ws, r, "Less: Net Income Attributable to NCI")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [-14, -477, 293][ci])
-    nci_keys = {"2026e": "asp_nci_2026e", "2027e": "asp_nci_2027e", "2028e": "asp_nci_2028e"}
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _lval(ws, r, fc, f"=Assumptions!I{R[nci_keys[yr]]}")
+    for fc in FCST_COLS:
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_nci']}")
     _note(ws, r, "NCI from Assumptions (AZ SCIP + Mobileye; Ireland SCIP eliminated Apr 2026)")
     R["pl_nci"] = r; r += 1
 
@@ -1706,9 +2076,8 @@ def build_consolidated_pl(wb, R):
     _label(ws, r, "D&A (Memo)")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [7847, 9951, 10757][ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _lval(ws, r, fc, f"=Assumptions!I{R[f'asp_da_{yr}']}")
+    for fc in FCST_COLS:
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_da']}")
     _note(ws, r, "Reference for EBITDA calc")
     R["pl_da"] = r; r += 1
 
@@ -1716,17 +2085,15 @@ def build_consolidated_pl(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [3229, 3410, 2434][ci])
     for fc in FCST_COLS:
-        _lval(ws, r, fc, f"=Assumptions!I{R['asp_sbc']}")
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_sbc']}")
     _note(ws, r, "Reference for CFO/FCF bridge")
     R["pl_sbc"] = r; r += 1
 
     _label(ws, r, "Diluted Shares Outstanding (M)")
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [4212, 4280, 4530][ci])
-    shares_keys = {"2026e": "asp_shares_2026e", "2027e": "asp_shares_2027e", "2028e": "asp_shares_2028e"}
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _lval(ws, r, fc, f"=Assumptions!I{R[shares_keys[yr]]}")
+    for fc in FCST_COLS:
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_shares']}")
     _note(ws, r, "Basic shares from Assumptions; diluted approximates basic")
     R["pl_shares"] = r; r += 1
 
@@ -1741,7 +2108,7 @@ def build_consolidated_pl(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [0.74, 0.38, 0.00][ci], "0.00")
     for fc in FCST_COLS:
-        _lval(ws, r, fc, f"=Assumptions!I{R['asp_dps']}", "0.00")
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_dps']}", "0.00")
     _note(ws, r, "Suspended; no reinstatement expected"); r += 1
 
     _set_col_widths(ws)
@@ -1752,13 +2119,25 @@ def build_consolidated_pl(wb, R):
 
 
 def _set_col_widths(ws):
-    ws.column_dimensions['A'].width = 42
-    for c in ['B','C','D','F','G','H']:
-        ws.column_dimensions[c].width = 14
-    ws.column_dimensions['E'].width = 2
-    ws.column_dimensions['I'].width = 14
-    ws.column_dimensions['J'].width = 2
-    ws.column_dimensions['K'].width = 55
+    ws.column_dimensions['A'].width = 44
+    if _is_quarterly(ws):
+        for c in range(2, GD_NCOL + 1):
+            cl = CL(c)
+            if c in (17, 34):
+                ws.column_dimensions[cl].width = 2
+            elif c in (6, 11, 16, 22, 27, 32):
+                ws.column_dimensions[cl].width = 15
+            elif c == GD_NCOL:
+                ws.column_dimensions[cl].width = 55
+            else:
+                ws.column_dimensions[cl].width = 12
+    else:
+        for c in ['B','C','D','F','G','H']:
+            ws.column_dimensions[c].width = 14
+        ws.column_dimensions['E'].width = 2
+        ws.column_dimensions['I'].width = 14
+        ws.column_dimensions['J'].width = 2
+        ws.column_dimensions['K'].width = 55
 
 
 # ============================================================
@@ -1775,7 +2154,6 @@ def build_bs(wb, R):
     _note(ws, 4, "Cash = Total L&E - Non-Cash Assets (plug). Balance check row must = 0.")
 
     r = 5
-    yr_labels = ["2026e","2027e","2028e"]
 
     # ---- ASSETS ----
     _section(ws, r, "ASSETS"); r += 1
@@ -1805,7 +2183,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [3402, 3478, 3839][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!I{R['asp_ar_days']}/365")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_ar_days']}/365")
     _note(ws, r, "= Revenue x AR Days / 365")
     R["bs_ar"] = r; r += 1
 
@@ -1814,7 +2192,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [11127, 12198, 11618][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_cogs']}*Assumptions!I{R['asp_inv_days']}/365")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_cogs']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_inv_days']}/365")
     _note(ws, r, "= COGS x Inventory Days / 365")
     R["bs_inventory"] = r; r += 1
 
@@ -1823,7 +2201,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [3706, 9586, 10815][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!I{R['asp_other_ca']}")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_other_ca']}")
     _note(ws, r, "= Revenue x Other CA% (incl. refundable tax credits)")
     R["bs_other_ca"] = r; r += 1
 
@@ -1844,10 +2222,9 @@ def build_bs(wb, R):
     # PP&E = Prior PP&E + CapEx - D&A - Govt Incentives
     # Simplified: Prior + Gross CapEx - D&A
     for fc in FCST_COLS:
-        yr = yr_labels[FCST_COLS.index(fc)]
         prev_col = HIST_COLS[2] if fc == 6 else fc - 1
         _fval(ws, r, fc,
-              f"={CL(prev_col)}{r}+Assumptions!I{R[f'asp_capex_{yr}']}-Consolidated_PL!{CL(fc)}{R['pl_da']}")
+              f"={CL(prev_col)}{r}+Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_capex']}-Consolidated_PL!{CL(fc)}{R['pl_da']}")
     _note(ws, r, "= Prior PP&E + Gross CapEx - D&A. Govt incentives not explicitly modelled (reducing gross PP&E).")
     R["bs_ppe"] = r; r += 1
 
@@ -1906,7 +2283,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [8578, 12556, 9882][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_cogs']}*Assumptions!I{R['asp_ap_days']}/365")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_cogs']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_ap_days']}/365")
     _note(ws, r, "= COGS x AP Days / 365")
     R["bs_ap"] = r; r += 1
 
@@ -1914,7 +2291,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [3655, 3343, 3990][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!I{R['asp_accrued_comp']}")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_accrued_comp']}")
     _note(ws, r, "= Revenue x Accrued Comp%")
     R["bs_accrued_comp"] = r; r += 1
 
@@ -1930,7 +2307,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [1107, 1756, 604][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!I{R['asp_tax_payable']}")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_tax_payable']}")
     _note(ws, r, "= Revenue x Tax Payable%")
     R["bs_tax_payable"] = r; r += 1
 
@@ -1938,7 +2315,7 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [12425, 14282, 14600][ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!I{R['asp_other_cl']}")
+        _fval(ws, r, fc, f"=Consolidated_PL!{CL(fc)}{R['pl_rev']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_other_cl']}")
     _note(ws, r, "= Revenue x Other CL%")
     R["bs_other_cl"] = r; r += 1
 
@@ -1955,9 +2332,8 @@ def build_bs(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, [46978, 46282, 44086][ci])
     # LT Debt = Total Debt - ST Debt
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"=Assumptions!I{R[f'asp_debt_{yr}']}-{CL(fc)}{R['bs_st_debt']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_debt']}-{CL(fc)}{R['bs_st_debt']}")
     _note(ws, r, "= Total Debt - ST Debt (from Assumptions)")
     R["bs_lt_debt"] = r; r += 1
 
@@ -1991,7 +2367,7 @@ def build_bs(wb, R):
     for fc in FCST_COLS:
         prev_col = HIST_COLS[2] if fc == 6 else fc - 1
         _fval(ws, r, fc,
-              f"={CL(prev_col)}{r}+Consolidated_PL!{CL(fc)}{R['pl_ni_intel']}+Consolidated_PL!{CL(fc)}{R['pl_sbc']}+Assumptions!I{R['asp_net_eq_iss']}")
+              f"={CL(prev_col)}{r}+Consolidated_PL!{CL(fc)}{R['pl_ni_intel']}+Consolidated_PL!{CL(fc)}{R['pl_sbc']}+Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_net_eq_iss']}")
     _note(ws, r, "= Prior Equity + NI to Intel + SBC + Net Equity Issuance. Dividends = 0.")
     R["bs_equity"] = r; r += 1
 
@@ -2153,9 +2529,8 @@ def build_cash_flow(wb, R):
     hist_capex = [-25750, -25122, -17672]
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, hist_capex[ci])
-    for fi, fc in enumerate(FCST_COLS):
-        yr = ["2026e","2027e","2028e"][fi]
-        _fval(ws, r, fc, f"=-Assumptions!I{R[f'asp_capex_{yr}']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"=-Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_capex']}")
     _note(ws, r, "Gross CapEx (negative). From Assumptions.")
     R["cf_capex"] = r; r += 1
 
@@ -2198,14 +2573,13 @@ def build_cash_flow(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, hist_debt_net[ci])
     for fi, fc in enumerate(FCST_COLS):
-        yr = ["2026e","2027e","2028e"][fi]
-        prev_yr = ["2025a","2026e","2027e"][fi]
-        prev_key = "bs_st_debt" if fi == 0 else f"asp_debt_{prev_yr}"
-        curr_key = f"asp_debt_{yr}"
+        ann_col = ASP_ANN_COLS[fc]
         if fi == 0:
-            _fval(ws, r, fc, f"=Assumptions!I{R[curr_key]}-(BS!{CL(HIST_COLS[2])}{R['bs_lt_debt']}+BS!{CL(HIST_COLS[2])}{R['bs_st_debt']})")
+            _fval(ws, r, fc, f"=Assumptions!{CL(ann_col)}{R['asp_debt']}-(BS!{CL(HIST_COLS[2])}{R['bs_lt_debt']}+BS!{CL(HIST_COLS[2])}{R['bs_st_debt']})")
         else:
-            _fval(ws, r, fc, f"=Assumptions!I{R[curr_key]}-Assumptions!I{R[prev_key]}")
+            prev_fc = FCST_COLS[fi - 1]
+            prev_ann = ASP_ANN_COLS[prev_fc]
+            _fval(ws, r, fc, f"=Assumptions!{CL(ann_col)}{R['asp_debt']}-Assumptions!{CL(prev_ann)}{R['asp_debt']}")
     _note(ws, r, "Change in Total Debt from Assumptions")
     R["cf_debt_net"] = r; r += 1
 
@@ -2214,7 +2588,7 @@ def build_cash_flow(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, hist_eq_net[ci])
     for fc in FCST_COLS:
-        _lval(ws, r, fc, f"=Assumptions!I{R['asp_net_eq_iss']}")
+        _lval(ws, r, fc, f"=Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_net_eq_iss']}")
     _note(ws, r, "ESPP proceeds net of RSU withholdings. FY2025 inflated by strategic placements.")
     R["cf_equity_net"] = r; r += 1
 
@@ -2223,7 +2597,7 @@ def build_cash_flow(wb, R):
     for ci, col in enumerate(HIST_COLS):
         _hval(ws, r, col, hist_div[ci])
     for fc in FCST_COLS:
-        _fval(ws, r, fc, f"=-Assumptions!I{R['asp_dps']}*Assumptions!I{R['asp_shares_2026e']}")
+        _fval(ws, r, fc, f"=-Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_dps']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_shares']}")
     _note(ws, r, "Dividends suspended; = 0.")
     R["cf_dividends"] = r; r += 1
 
@@ -2260,20 +2634,68 @@ def build_cash_flow(wb, R):
 # ============================================================
 
 def build_dcf(wb, R):
-    """Build DCF valuation: UFCF -> PV -> TV -> EV -> Equity -> per-share value."""
+    """Build DCF valuation: UFCF -> PV -> TV -> EV -> Equity -> per-share value.
+    Includes WACC assumptions (moved from Assumptions tab)."""
     ws = wb["DCF"]
     _title_row(ws, 1, "Intel (INTC) - Discounted Cash Flow Valuation")
     _unit_row(ws, 2, "USD Million (except per-share data & multiples)")
-    _label(ws, 4, "Forecast Period")
-    _note(ws, 4, "DCF based on Unlevered Free Cash Flow (UFCF). TV = Gordon Growth Model.")
 
-    r = 5
-    yr_labels = ["2026e","2027e","2028e"]
     # Year numbering for DCF (t=1, 2, 3)
     for fi, fc in enumerate(FCST_COLS):
         ws.cell(row=3, column=fc, value=f"Year {fi+1}").font = FONT_HEADER
         ws.cell(row=3, column=fc).fill = FILL_HEADER; ws.cell(row=3, column=fc).border = BD
         ws.cell(row=3, column=fc).alignment = ALIGN_CENTER
+    # Standard header row for WACC section
+    _year_header(ws, 4)
+
+    r = 6
+
+    # ---- WACC Parameters ----
+    _section(ws, r, "WACC Assumptions"); r += 1
+    _arow_const(ws, r, "Risk-Free Rate (Rf)", 0.0388, 0.0425, 0.045, 0.045, "0.00%",
+                "US 10Y Treasury, May 2026"); R["dcf_rf"] = r; r += 1
+    _arow_const(ws, r, "Equity Risk Premium (ERP)", 0.055, 0.055, 0.055, 0.055, "0.00%",
+                "Damodaran 2026 implied ERP"); R["dcf_erp"] = r; r += 1
+    _arow(ws, r, "Levered Beta (β)", 1.20, 1.35, 1.50, 1.50, 1.30, 1.80, "0.00",
+          "Bloomberg 2Y adj beta; Bear=1.80 on higher risk"); R["dcf_beta"] = r; r += 1
+    _arow_const(ws, r, "Pre-Tax Cost of Debt (Kd)", 0.048, 0.05, 0.05, 0.050, "0.00%",
+                "Weighted avg coupon on outstanding notes"); R["dcf_kd"] = r; r += 1
+    _arow(ws, r, "Target D/(D+E)", 0.30, 0.32, 0.32, 0.25, 0.20, 0.35, "0.0%",
+          "Long-term target; D/EV =32% at current prices"); R["dcf_dtc"] = r; r += 1
+    _arow(ws, r, "Marginal Tax Rate (for WACC)", None, None, None, 0.12, 0.11, 0.15, "0.00%",
+          "Marginal rate for interest tax shield. Base=12% (aligned with Q2 2026 guided 11%)"); R["dcf_etr_marginal"] = r; r += 1
+    _arow(ws, r, "Terminal Growth Rate (g)", None, None, None, 0.025, 0.030, 0.020, "0.00%",
+          "Base=2.5% LT nominal GDP+; Bull=3.0% AI secular; Bear=2.0% mature"); R["dcf_tg"] = r; r += 1
+
+    r += 1
+    # Derived WACC
+    _section(ws, r, "Derived WACC"); r += 1
+    _label(ws, r, "Cost of Equity (Ke)")
+    _fval(ws, r, 2, f"=I{R['dcf_rf']}+I{R['dcf_beta']}*I{R['dcf_erp']}", "0.00%")
+    _fval(ws, r, 6, f"=F{R['dcf_rf']}+F{R['dcf_beta']}*F{R['dcf_erp']}", "0.00%")
+    _fval(ws, r, 7, f"=G{R['dcf_rf']}+G{R['dcf_beta']}*G{R['dcf_erp']}", "0.00%")
+    _fval(ws, r, 8, f"=H{R['dcf_rf']}+H{R['dcf_beta']}*H{R['dcf_erp']}", "0.00%")
+    _note(ws, r, "Ke = Rf + β × ERP")
+    R["dcf_ke"] = r; r += 1
+    _label(ws, r, "After-Tax Cost of Debt")
+    _fval(ws, r, SEL_COL, f"=I{R['dcf_kd']}*(1-I{R['dcf_etr_marginal']})", "0.00%")
+    _note(ws, r, "Kd × (1 − ETR)")
+    R["dcf_atkd"] = r; r += 1
+    _label(ws, r, "WACC")
+    _fval(ws, r, SEL_COL, f"=I{R['dcf_ke']}*(1-I{R['dcf_dtc']})+I{R['dcf_atkd']}*I{R['dcf_dtc']}", "0.00%")
+    _note(ws, r, "WACC = Ke×(1−D/TC) + Kd(1−t)×D/TC")
+    R["dcf_wacc"] = r; r += 1
+
+    r += 1
+    _section(ws, r, "Valuation Bridge Inputs"); r += 1
+    _label(ws, r, "Cash & Equivalents ($M) - from BS")
+    R["dcf_cash_bridge_val"] = r; r += 1
+    _label(ws, r, "Total Debt ($M) - from BS")
+    R["dcf_debt_bridge_val"] = r; r += 1
+
+    # DCF Calculation
+    r += 1
+    _section(ws, r, "DCF Calculation"); r += 1
 
     # EBIT
     _label(ws, r, "EBIT")
@@ -2286,10 +2708,8 @@ def build_dcf(wb, R):
     _label(ws, r, "(-) Tax on EBIT")
     for col in HIST_COLS:
         _hval(ws, r, col, 0)  # Not meaningful historically
-    etr_keys = {"2026e": "asp_etr_sel", "2027e": "asp_etr_2027e", "2028e": "asp_etr_2028e"}
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"={CL(fc)}{R['dcf_ebit']}*Assumptions!I{R[etr_keys[yr]]}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"={CL(fc)}{R['dcf_ebit']}*Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_etr']}")
     _note(ws, r, "= EBIT x ETR from Assumptions")
     R["dcf_tax_on_ebit"] = r; r += 1
 
@@ -2310,9 +2730,8 @@ def build_dcf(wb, R):
     _label(ws, r, "(-) Capital Expenditure")
     for col in HIST_COLS:
         _hval(ws, r, col, 0)
-    for fi, fc in enumerate(FCST_COLS):
-        yr = yr_labels[fi]
-        _fval(ws, r, fc, f"=-Assumptions!I{R[f'asp_capex_{yr}']}")
+    for fc in FCST_COLS:
+        _fval(ws, r, fc, f"=-Assumptions!{CL(ASP_ANN_COLS[fc])}{R['asp_capex']}")
     _note(ws, r, "Gross CapEx (negative). From Assumptions.")
     R["dcf_capex"] = r; r += 1
 
@@ -2341,8 +2760,8 @@ def build_dcf(wb, R):
     _label(ws, r, "Discount Factor")
     for fi, fc in enumerate(FCST_COLS):
         t = fi + 1
-        _fval(ws, r, fc, f"=1/(1+Assumptions!I{R['asp_wacc']})^{t}", "0.0000")
-    _note(ws, r, f"= 1/(1+WACC)^t. WACC from Assumptions (~10.5-10.7%)")
+        _fval(ws, r, fc, f"=1/(1+I{R['dcf_wacc']})^{t}", "0.0000")
+    _note(ws, r, "= 1/(1+WACC)^t. WACC from DCF tab assumptions (~10.5-10.7%)")
     R["dcf_df"] = r; r += 1
 
     # PV of UFCF
@@ -2360,12 +2779,12 @@ def build_dcf(wb, R):
     _note(ws, r, "= UFCF in final explicit forecast year"); r += 1
 
     _label(ws, r, "Terminal Growth Rate (g)")
-    _lval(ws, r, 8, f"=Assumptions!I{R['asp_tg']}", "0.00%")
-    _note(ws, r, "From Assumptions. Base = 2.5%.")
-    R["dcf_tg"] = r; r += 1
+    _lval(ws, r, 8, f"=I{R['dcf_tg']}", "0.00%")
+    _note(ws, r, "From DCF WACC assumptions. Base = 2.5%.")
+    r += 1
 
     _label(ws, r, "Terminal Value (TV = UFCF x (1+g) / (WACC-g))")
-    _fval(ws, r, 8, f"=H{R['dcf_ufcf']}*(1+H{r-1})/(Assumptions!I{R['asp_wacc']}-H{r-1})")
+    _fval(ws, r, 8, f"=H{R['dcf_ufcf']}*(1+H{r-1})/(I{R['dcf_wacc']}-H{r-1})")
     _note(ws, r, "Gordon Growth: TV = UFCF_terminal x (1+g) / (WACC - g)")
     R["dcf_tv"] = r; r += 1
 
@@ -2438,8 +2857,8 @@ def build_dcf(wb, R):
     # DCF Summary table
     _section(ws, r, "DCF Summary"); r += 1
     summary_items = [
-        ("WACC", f"=Assumptions!I{R['asp_wacc']}", "0.00%"),
-        ("Terminal Growth Rate", f"=Assumptions!I{R['asp_tg']}", "0.00%"),
+        ("WACC", f"=I{R['dcf_wacc']}", "0.00%"),
+        ("Terminal Growth Rate", f"=I{R['dcf_tg']}", "0.00%"),
         ("Sum PV UFCF", f"=H{R['dcf_sum_pv_ufcf']}", "#,##0"),
         ("PV Terminal Value", f"=H{R['dcf_pv_tv_val']}", "#,##0"),
         ("TV % of EV", f"=H{R['dcf_pv_tv_val']}/H{R['dcf_ev']}", "0.0%"),
@@ -2510,7 +2929,7 @@ def build_sensitivity(wb, R):
             c.border = BD; c.alignment = ALIGN_CENTER
         r += 1
 
-    _note(ws, r - len(g_values), "TODO: Implement 2D DATA TABLE in Excel. Open in Excel, select the table range, Data > What-If Analysis > Data Table. Row input: WACC cell (Assumptions!I{wacc_row}). Column input: g cell (Assumptions!I{tg_row}). Base case (WACC=10.7%, g=2.5%) is marked.")
+    _note(ws, r - len(g_values), "TODO: Implement 2D DATA TABLE in Excel. Open in Excel, select the table range, Data > What-If Analysis > Data Table. Row input: WACC cell (DCF!I{wacc_row}). Column input: g cell (DCF!I{tg_row}). Base case (WACC=10.7%, g=2.5%) is marked.")
     r += 1
 
     _section(ws, r, "Instructions"); r += 1
@@ -2519,8 +2938,8 @@ def build_sensitivity(wb, R):
         "2. Go to Sensitivity tab",
         "3. Select the table range (B7:H11)",
         "4. Data > What-If Analysis > Data Table",
-        f"5. Row input cell: =Assumptions!$I${R['asp_wacc']}",
-        f"6. Column input cell: =Assumptions!$I${R['asp_tg']}",
+        f"5. Row input cell: =DCF!$I${R['dcf_wacc']}",
+        f"6. Column input cell: =DCF!$I${R['dcf_tg']}",
         "7. Click OK. Table will populate with implied prices.",
     ]
     for inst in instructions:
@@ -2692,7 +3111,7 @@ def build_ratio_analysis(wb, R):
          f"=({SP}/Consolidated_PL!D{R['pl_eps']})/((Consolidated_PL!D{R['pl_eps']}/Consolidated_PL!C{R['pl_eps']}-1)*100)", "0.00x",
          "P/E / TTM EPS Growth %; NM if growth <=0"),
         ("Dividend Yield %",
-         f"=Assumptions!I{R['asp_dps']}/{SP}", "0.0%",
+         f"=Assumptions!P{R['asp_dps']}/{SP}", "0.0%",
          "TTM DPS / Price; dividend currently suspended"),
     ]
     for label, formula, fmt, note_text in ttm_metrics:
@@ -2737,7 +3156,7 @@ def build_ratio_analysis(wb, R):
          f"=({SP}/Consolidated_PL!F{R['pl_eps']})/((Consolidated_PL!F{R['pl_eps']}/Consolidated_PL!D{R['pl_eps']}-1)*100)", "0.00x",
          "P/E / NTM EPS Growth %; NM if growth <=0"),
         ("Dividend Yield %",
-         f"=Assumptions!I{R['asp_dps']}/{SP}", "0.0%",
+         f"=Assumptions!V{R['asp_dps']}/{SP}", "0.0%",
          "NTM DPS / Price; dividend currently suspended"),
     ]
     for label, formula, fmt, note_text in ntm_metrics:
@@ -2811,11 +3230,11 @@ def build_key_summary(wb, R):
     for sk, sl in [("ccg","CCG"),("dcai","DCAI"),("foundry","Intel Foundry"),("allother","All Other")]:
         _label(ws, r, f"  {sl}")
         for col in HIST_COLS + FCST_COLS:
-            _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_'+sk]}")
+            _lval(ws, r, col, f"=Segment_PL!{CL(SEGPL_COL_MAP[col])}{R['segpl_'+sk+'_rev']}")
         r += 1
     _label(ws, r, "  Total Consolidated", bold=True)
     for col in HIST_COLS + FCST_COLS:
-        _lval(ws, r, col, f"=Segment_Revenue!{CL(col)}{R['segrev_consol_rev']}")
+        _lval(ws, r, col, f"=Segment_PL!{CL(SEGPL_COL_MAP[col])}{R['segpl_consol_rev']}")
     r += 2
 
     # BS Highlights
@@ -2938,7 +3357,7 @@ def build_cover(wb):
         ("Reporting Segments", "CCG, DCAI, Intel Foundry, All Other (Mobileye + IMS + Other)"),
         ("", ""),
         ("Scenario Selector", "Assumptions tab, Cell B2 (Base / Bull / Bear)"),
-        ("Model Architecture", "12 tabs: Cover -> Key_Summary -> Assumptions -> Growth_Drivers -> Segment_Revenue -> Segment_PL -> Consolidated_PL -> BS -> Cash_Flow -> DCF -> Sensitivity -> Ratio_Analysis"),
+        ("Model Architecture", "11 tabs: Cover -> Key_Summary -> Assumptions -> Growth_Drivers -> Segment_PL -> Consolidated_PL -> BS -> Cash_Flow -> DCF -> Sensitivity -> Ratio_Analysis"),
         ("", ""),
         ("Key Data Sources", "Intel 10-K filings (FY2022-FY2025), Q1 2026 10-Q, Q1 2026 Earnings Call (Apr 23, 2026)"),
         ("Assumptions Date", "May 7, 2026 (intc_assumptions.md)"),
@@ -3024,54 +3443,47 @@ def build_model():
     # Create all sheets in tab order
     ws0 = wb.active
     ws0.title = "Cover"
-    for name in ["Key_Summary", "Assumptions", "Growth_Drivers", "Segment_Revenue", "Segment_PL",
+    for name in ["Key_Summary", "Assumptions", "Growth_Drivers", "Segment_PL",
                  "Consolidated_PL", "BS", "Cash_Flow", "DCF", "Sensitivity", "Ratio_Analysis"]:
         wb.create_sheet(name)
 
     # Build in dependency order
-    print("  1/12 Cover ...")
+    print("  1/11 Cover ...")
     build_cover(wb)
 
-    print("  2/12 Assumptions ...")
+    print("  2/11 Assumptions ...")
     build_assumptions(wb, R)
 
-    print("  3/12 Segment_Revenue (pass 1 - structure + historical) ...")
-    build_segment_revenue(wb, R)
-
-    print("  4/12 Growth_Drivers ...")
-    build_growth_drivers(wb, R)
-
-    print("  4.5/12 Segment_Revenue (pass 2 - link to Growth_Drivers) ...")
-    build_segment_revenue_link_gd(wb, R)
-
-    print("  5/12 Segment_PL (pass 1) ...")
+    print("  3/11 Segment_PL (pass 1 - structure + historical) ...")
     build_segment_pl(wb, R)
 
-    print("  6/12 Consolidated_PL ...")
-    build_consolidated_pl(wb, R)
+    print("  4/11 Growth_Drivers ...")
+    build_growth_drivers(wb, R)
 
-    print("  7/12 Segment_PL (pass 2 - cross-check) ...")
+    print("  5/11 Segment_PL (pass 2 - link to Growth_Drivers) ...")
     build_segment_pl_pass2(wb, R)
 
-    print("  8/12 Balance Sheet ...")
+    print("  6/11 Consolidated_PL ...")
+    build_consolidated_pl(wb, R)
+
+    print("  7/11 Segment_PL (pass 3 - cross-check) ...")
+    build_segment_pl_pass3(wb, R)
+
+    print("  8/11 Balance Sheet ...")
     build_bs(wb, R)
 
-    print("  9/12 Cash_Flow ...")
+    print("  9/11 Cash_Flow ...")
     build_cash_flow(wb, R)
 
-    print(" 10/12 DCF ...")
+    print(" 10/11 DCF ...")
     build_dcf(wb, R)
 
-    print(" 11/12 Sensitivity ...")
+    print(" 11/11 Sensitivity + Ratio_Analysis ...")
     build_sensitivity(wb, R)
-
-    print(" 12/12 Ratio_Analysis ...")
     build_ratio_analysis(wb, R)
 
     print("  Key_Summary (dashboard) ...")
     build_key_summary(wb, R)
-
-    # Key_Summary already at position 1 (created first after Cover)
 
     # Save
     wb.save(OUTPUT)
@@ -3097,7 +3509,7 @@ def check_model(output_path=OUTPUT):
 
     # 1. Check all expected tabs exist
     expected_tabs = ["Cover", "Key_Summary", "Assumptions", "Growth_Drivers",
-                     "Segment_Revenue", "Segment_PL", "Consolidated_PL", "BS",
+                     "Segment_PL", "Consolidated_PL", "BS",
                      "Cash_Flow", "DCF", "Sensitivity", "Ratio_Analysis"]
     for tab in expected_tabs:
         if tab not in wb.sheetnames:
@@ -3133,37 +3545,42 @@ def check_model(output_path=OUTPUT):
         else:
             warnings.append("BS balance check row not found")
 
-    # 4. Check no formulas in Notes column (col K=11)
+    # 4. Check no formulas in Notes column (tab-specific: K=11 for most, AI=35 for quarterly)
+    quarterly_tabs = {"Growth_Drivers", "Assumptions", "Segment_PL"}
+    notes_col_issues = []
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=11, max_col=11):
+        notes_col = GD_NCOL if sheet_name in quarterly_tabs else NCOL
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=notes_col, max_col=notes_col):
             for cell in row:
                 if cell.value and str(cell.value).startswith("="):
-                    warnings.append(f"{sheet_name}!{cell.coordinate}: Notes column contains formula: {cell.value}")
-    if not any("Notes column contains formula" in w for w in warnings):
-        print("  [PASS] No formulas in Notes column (K)")
+                    notes_col_issues.append(f"{sheet_name}!{cell.coordinate}: Notes column contains formula: {cell.value}")
+    if not notes_col_issues:
+        print("  [PASS] No formulas in Notes column")
     else:
-        print("  [WARN] Some Notes cells start with '=' (stripped by note() helper)")
+        for w in notes_col_issues:
+            print(f"  [WARN] {w}")
 
-    # 5. Check CHOOSE/MATCH formulas in Assumptions col I
+    # 5. Check CHOOSE/MATCH formulas in Assumptions (quarterly: cols 18-32)
     if "Assumptions" in wb.sheetnames:
         ws = wb["Assumptions"]
         choose_count = 0
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=9, max_col=9):
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=18, max_col=32):
             for cell in row:
                 if cell.value and "CHOOSE(MATCH" in str(cell.value):
                     choose_count += 1
-        print(f"  [PASS] {choose_count} CHOOSE/MATCH formulas in Assumptions")
+        print(f"  [PASS] {choose_count} CHOOSE/MATCH formulas in Assumptions (quarterly forecast columns)")
 
-    # 6. Check Segment_Revenue formulas reference Assumptions
-    if "Segment_Revenue" in wb.sheetnames:
-        ws = wb["Segment_Revenue"]
+    # 6. Check Segment_PL formulas reference Assumptions (quarterly layout)
+    if "Segment_PL" in wb.sheetnames:
+        ws = wb["Segment_PL"]
         ref_count = 0
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=6, max_col=8):
+        # Scan forecast quarterly + annual columns (18-32) for Assumptions references
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=18, max_col=32):
             for cell in row:
                 if cell.value and "Assumptions!" in str(cell.value):
                     ref_count += 1
-        print(f"  [PASS] {ref_count} forecast formulas reference Assumptions in Segment_Revenue")
+        print(f"  [PASS] {ref_count} forecast formulas reference Assumptions in Segment_PL")
 
     # 7. Check DCF has implied price
     if "DCF" in wb.sheetnames:

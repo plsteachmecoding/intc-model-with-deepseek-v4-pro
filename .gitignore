@@ -5,6 +5,7 @@ __pycache__/
 
 # Large company filings (available on SEC EDGAR)
 company files/
+company filings/
 
 # Local Claude Code settings
 .claude/
