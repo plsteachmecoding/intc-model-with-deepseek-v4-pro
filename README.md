@@ -28,16 +28,16 @@
 | # | Tab | 内容说明 | 是否可编辑 |
 |---|-----|---------|-----------|
 | 1 | **Cover** | 封面、公司信息、使用说明 | 只读 |
-| 2 | **Key_Summary** | 高管仪表盘：核心 KPI + 分业务收入及占比 + BS 要点 + ROE/ROA + 投资要点 | 只读 |
-| 3 | **Assumptions** | **情景控制中心**：Base/Bull/Bear 三情景 × 季度颗粒度，所有假设参数（TAM、份额、ASP、OPM%、费用率、CapEx、WC 等），每个参数一行 Label + 三行情景值 + CHOOSE/MATCH 选择行 | **✎ 在此编辑** |
-| 4 | **Growth_Drivers** | **自下而上收入拆解**：每个业务分部的收入由 TAM × 份额 × ASP 等底层驱动因子计算得出，含历史调节验证（Implied vs Reported）和驱动因子弹性分析 | 只读 |
-| 5 | **Segment_PL** | **分部 P&L（收入 + 营业利润）**：CCG / DCAI / Intel Foundry / All Other 四个分部的季度收入与 OI，含 Corporate Unallocated、合并收入、交叉验证行 | 只读 |
-| 6 | **Consolidated_PL** | 合并利润表（按费用类型）：COGS / R&D / MG&A → EBIT（来自 Segment_PL Sum OI）→ NI → EPS，含毛利率/EBIT 率/净利率 | 只读 |
-| 7 | **BS** | 资产负债表：流动资产（现金为平衡项）+ 非流动资产 + 流动负债 + 非流动负债 + 权益，含 Balance Check 行 | 只读 |
-| 8 | **Cash_Flow** | 现金流量表：CFO（含 22 项 WC 变动）+ CFI（CapEx）→ FCF | 只读 |
-| 9 | **DCF** | 无杠杆 DCF 估值：WACC 参数 + NOPAT + UFCF + 折现因子 + 终值 + EV → 隐含股价 | 只读 |
+| 2 | **Key_Summary** | 高管仪表盘：核心 KPI + 分业务收入及占比 + BS 要点 + ROE/ROA + 投资要点 |
+| 3 | **Assumptions** | **情景控制中心**：Base/Bull/Bear 三情景 × 季度颗粒度，所有假设参数（TAM、份额、ASP、OPM%、费用率、CapEx、WC 等），每个参数一行 Label + 三行情景值 + CHOOSE/MATCH 选择行 |
+| 4 | **Growth_Drivers** | **自下而上收入拆解**：每个业务分部的收入由 TAM × 份额 × ASP 等底层驱动因子计算得出，含历史调节验证（Implied vs Reported）和驱动因子弹性分析 | 
+| 5 | **Segment_PL** | **分部 P&L（收入 + 营业利润）**：CCG / DCAI / Intel Foundry / All Other 四个分部的季度收入与 OI，含 Corporate Unallocated、合并收入、交叉验证行 | 
+| 6 | **Consolidated_PL** | 合并利润表（按费用类型）：COGS / R&D / MG&A → EBIT（来自 Segment_PL Sum OI）→ NI → EPS，含毛利率/EBIT 率/净利率 |
+| 7 | **BS** | 资产负债表：流动资产（现金为平衡项）+ 非流动资产 + 流动负债 + 非流动负债 + 权益，含 Balance Check 行 |
+| 8 | **Cash_Flow** | 现金流量表：CFO（含 22 项 WC 变动）+ CFI（CapEx）→ FCF |
+| 9 | **DCF** | 无杠杆 DCF 估值：WACC 参数 + NOPAT + UFCF + 折现因子 + 终值 + EV → 隐含股价 |
 | 10 | **Sensitivity** | 二维数据表：WACC × Terminal Growth → 隐含股价矩阵 | Excel 数据表 |
-| 11 | **Ratio_Analysis** | 财务比率分析：盈利能力 / 效率 / 杠杆 / 现金流质量 / 增长率 / **估值倍数**（TTM & NTM 的 P/E, P/B, P/S, EV/EBITDA, P/CF, PEG） | 只读* |
+| 11 | **Ratio_Analysis** | 财务比率分析：盈利能力 / 效率 / 杠杆 / 现金流质量 / 增长率 / **估值倍数**（TTM & NTM 的 P/E, P/B, P/S, EV/EBITDA, P/CF, PEG） |
 
 > \*Ratio_Analysis 中 **F 列（NTM/FY2026E）Stock Price** 为蓝色填充单元格，可编辑当前股价，所有倍数自动更新。
 
